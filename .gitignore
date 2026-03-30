@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.venv
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Data and models (user downloads separately)
+/data/
+checkpoints/
+checkpoints_mo/
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.bin
+
+# HuggingFace cache
+.huggingface/
+
+# Training outputs
+runs/
+logs/
+wandb/
+tensorboard/
+lightning_logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# PyTorch3D build
+pytorch3d_build/
+
+# Demo data (not shipped)
+demo_splats/
+demo_data/
+
+# Paper source (kept separately)
+paper/
+
+# Sheikah Slate demo (WIP)
+scripts/demo/locate_3d.py

@@ -1,0 +1,35 @@
+# TrianguLang Requirements
+#
+# Core dependencies are inherited from SAM3 (pip install -e sam3/) and DA3 (pip install -e depth_anything_v3/)
+# SAM3 provides: torch, timm, numpy, tqdm, ftfy, regex, iopath, huggingface_hub
+#
+# PyTorch (install separately with CUDA):
+#   pip install torch==2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+
+# Multi-view extensions
+scipy>=1.11.0
+einops>=0.6.0
+tyro>=0.9.0
+
+# DA3 dependencies
+xformers
+opencv-python
+imageio
+trimesh
+open3d
+omegaconf
+plyfile
+pillow_heif
+moviepy==1.0.3
+decord
+pycolmap
+e3nn
+evo
+typer>=0.9.0
+
+# Visualization
+matplotlib
+
+# SAM3 additional
+pycocotools
+psutil

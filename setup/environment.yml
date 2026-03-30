@@ -1,0 +1,35 @@
+name: triangulang
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+    - torch==2.7.0
+    - torchvision
+    - torchaudio
+    - xformers==0.0.30
+    - scipy>=1.11.0
+    - einops>=0.6.0
+    - opencv-python
+    - imageio
+    - trimesh
+    - open3d
+    - omegaconf
+    - plyfile
+    - pillow_heif
+    - moviepy==1.0.3
+    - decord
+    - pycolmap
+    - e3nn
+    - evo
+    - typer>=0.9.0
+    - matplotlib
+    - pycocotools
+    - psutil
+    - numpy
+    - tqdm
+    - ftfy
+    - regex
+    - huggingface_hub
