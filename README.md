@@ -23,7 +23,7 @@ Case Western Reserve University
   <img src="assets/decoder.png" width="70%"/>
 </p>
 
-TrianguLang is a **feed-forward**, **pose-free** method for **language-guided 3D localization** from multi-view images. Given unposed images and a text query (e.g., *"the red mug on the table"*), it produces per-view segmentation masks and a camera-relative 3D location at ~10 FPS — no COLMAP, no SfM, no calibration.
+TrianguLang is a **feed-forward**, **pose-free** method for **language-guided 3D localization** from multi-view images. Given unposed images and a text query (e.g., *"the red mug on the table"*), it produces per-view segmentation masks and a camera-relative 3D location at ~18 FPS for 5-10 classes.
 
 A single text prompt replaces the O(N) per-view click annotations required by prior methods.
 
