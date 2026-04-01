@@ -56,8 +56,8 @@ cd ..
 
 SAM3 model weights require HuggingFace authentication:
 
-1. Go to [huggingface.co/facebook/sam3-hiera-large](https://huggingface.co/facebook/sam3-hiera-large) and request access
-2. Run `huggingface-cli login` and enter your token
+1. Go to [huggingface.co/facebook/sam3](https://huggingface.co/facebook/sam3) and request access
+2. Run `hf auth login` and enter your token
 
 ### 5. Install Depth Anything V3
 
@@ -131,4 +131,4 @@ Reduce `--batch-size` to 1 or reduce `--views` to 4.
 Install the prebuilt wheel: `pip install xformers==0.0.30 --index-url https://download.pytorch.org/whl/cu126`
 
 **SAM3 weight download fails**
-Ensure you've been granted access on HuggingFace and logged in with `huggingface-cli login`.
+Ensure you've been granted access on HuggingFace and logged in with `hf auth login`.

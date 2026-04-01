@@ -19,7 +19,11 @@ Case Western Reserve University
   <img src="assets/architecture.png" width="90%"/>
 </p>
 
-TrianguLang is a **feed-forward**, **pose-free** method for **language-guided 3D localization** from multi-view images. Given unposed images and a text query (e.g., *"the red mug on the table"*), it produces per-view segmentation masks and a camera-relative 3D location without any calibration.
+<p align="center">
+  <img src="assets/decoder.png" width="70%"/>
+</p>
+
+TrianguLang is a **feed-forward**, **pose-free** method for **language-guided 3D localization** from multi-view images. Given unposed images and a text query (e.g., *"the red mug on the table"*), it produces per-view segmentation masks and a camera-relative 3D location at ~10 FPS — no COLMAP, no SfM, no calibration.
 
 A single text prompt replaces the O(N) per-view click annotations required by prior methods.
 
@@ -30,14 +34,6 @@ A single text prompt replaces the O(N) per-view click annotations required by pr
 - **Spatial language grounding:** Disambiguate with natural language (*"nearest chair"*, *"leftmost cup"*) using depth-derived spatial reasoning.
 - **Multi-object segmentation:** SAM3-style batch expansion for simultaneous multi-object detection from a single forward pass.
 
-## Architecture
-
-<p align="center">
-  <img src="assets/decoder.png" width="75%"/>
-</p>
-
-The GASA decoder replaces SAM3's standard decoder with geometry-aware cross-view attention. Each decoder layer applies: (1) world-space positional encoding from DA3 depth, (2) geometric attention bias that penalizes matches between spatially distant tokens, and (3) text cross-attention at every layer. The decoder outputs query embeddings that are projected through SAM3's frozen segmentation head to produce per-view masks.
-
 ## Results
 
 ### ScanNet++ (230 training scenes, text-only prompts)
@@ -45,9 +41,9 @@ The GASA decoder replaces SAM3's standard decoder with geometry-aware cross-view
 | Model | mIoU | mAcc |
 |-------|------|------|
 | MV-SAM (12 clicks/view) | 51.0% | 66.0% |
-| SAM3 | 48.6% | 63.4% |
+| SAM3 (no cross-view) | 48.6% | - |
 | **TrianguLang (text-only)** | **62.4%** | **77.4%** |
-| **TrianguLang MO** | **65.2%** | **78.7%** |
+| TrianguLang + CRF | 65.2% | - |
 
 ### Cross-Dataset Transfer
 
@@ -58,9 +54,9 @@ The GASA decoder replaces SAM3's standard decoder with geometry-aware cross-view
 | ScanNet++ | SPIn-NeRF | **91.4%** |
 | ScanNet++ | LERF-OVS | **58.1%** |
 
-Inference speed: ~58ms/sample on a single A100.
+Inference speed: ~57ms/frame (5-10 classes) on a single A100.
 
-**Frozen:** ~1.2B params (DA3 335M + SAM3 848M) | **Trainable:** ~13M params (GASA decoder)
+**Frozen:** ~2.5B params (SAM3 841M + DA3-NESTED-GIANT-LARGE 1.69B) | **Trainable:** ~13.5M params (GASA decoder)
 
 ## Installation
 
@@ -92,7 +88,7 @@ pip install -r requirements.txt
 
 SAM3 requires HuggingFace authentication:
 
-1. Request access at [huggingface.co/facebook/sam3-hiera-large](https://huggingface.co/facebook/sam3-hiera-large)
+1. Request access at [huggingface.co/facebook/sam3](https://huggingface.co/facebook/sam3)
 2. Authenticate: `hf auth login`
 
 ## Data

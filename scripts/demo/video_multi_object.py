@@ -180,9 +180,8 @@ def load_scene_objects(scene_path, semantics_dir):
             all_objects[obj_id] = label
 
     # Filter to objects actually visible in GT masks (sample a few frames)
-    skip_labels = {'remove', 'split', 'object', 'objects', 'stuff', 'unknown',
-                   'wall', 'floor', 'ceiling', 'door', 'window', 'doorframe',
-                   'windowframe', 'window frame', 'reflection', 'mirror', 'structure'}
+    from triangulang.utils.scannetpp_loader import SCANNETPP_SKIP_LABELS
+    skip_labels = SCANNETPP_SKIP_LABELS
 
     pth_files = sorted(sem_path.glob("*.pth"))
     if not pth_files:

@@ -302,17 +302,10 @@ class CategoryMetricsTracker:
 
         # Step 4: Update local tracker with ALL categories from ALL ranks
         # Use global_hash_to_name to recover category names for categories we didn't see locally
-        if os.environ.get('DDP_DEBUG'):
-            print(f"[R{ddp.rank}] sync: global_hash_to_name has {len(global_hash_to_name)} categories, "
-                  f"hash_to_intersection has {len(hash_to_intersection)} hashes", flush=True)
-
         for h, name in global_hash_to_name.items():
             if h in hash_to_intersection:
                 self.category_intersection[name] = hash_to_intersection[h]
                 self.category_union[name] = hash_to_union[h]
-
-        if os.environ.get('DDP_DEBUG'):
-            print(f"[R{ddp.rank}] sync: After update, tracker has {len(self.category_intersection)} categories", flush=True)
 
     def summary(self):
         """Get summary dict for logging."""
