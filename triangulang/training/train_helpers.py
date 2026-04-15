@@ -219,6 +219,10 @@ def collate_fn(batch, max_objects=0):
     if all('cached_da3_intrinsics' in b and b['cached_da3_intrinsics'] is not None for b in valid_batch):
         result['cached_da3_intrinsics'] = torch.stack([b['cached_da3_intrinsics'] for b in valid_batch])
 
+    # Optional: cached PI3X world-frame pointmaps (bypasses DA3 for pointmaps)
+    if all('cached_pi3x_pointmaps' in b and b['cached_pi3x_pointmaps'] is not None for b in valid_batch):
+        result['cached_pi3x_pointmaps'] = torch.stack([b['cached_pi3x_pointmaps'] for b in valid_batch])
+
     # Optional: GT 3D centroids for supervision
     if all('centroid_3d' in b and b['centroid_3d'] is not None for b in valid_batch):
         result['centroid_3d'] = torch.stack([b['centroid_3d'] for b in valid_batch])
@@ -528,12 +532,3 @@ def visualize_predictions(run_dir, epoch, images, gt_masks, outputs, prompts, ma
     plt.savefig(vis_dir / filename, dpi=150, bbox_inches='tight')
     plt.close(fig)
     print(f"  Saved visualization to {vis_dir / filename}")
-
-
-
-# Re-exports from train_setup
-from triangulang.training.train_setup import (
-    _setup_config, _init_environment, _load_datasets,
-    _build_model, _setup_training, _save_checkpoint,
-    _finalize_epoch, _run_validation_and_save,
-)

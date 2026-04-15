@@ -1,34 +1,4 @@
 """Constants and normalization utilities for uCO3D dataset."""
-import os
-import sys
-import json
-import random
-import hashlib
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Union
-from collections import defaultdict
-
-import numpy as np
-import torch
-import torch.nn.functional as F
-from torch.utils.data import Dataset
-from PIL import Image
-
-# Try to import uCO3D package
-try:
-    from uco3d import UCO3DDataset as UCO3DDatasetBase, UCO3DFrameDataBuilder
-    from uco3d.dataset_utils.utils import get_dataset_root
-    HAS_UCO3D = True
-except ImportError:
-    HAS_UCO3D = False
-    print("[uCO3D] Warning: uco3d package not installed. Using standalone loader.")
-
-# Try to import h5py for depth loading
-try:
-    import h5py
-    HAS_H5PY = True
-except ImportError:
-    HAS_H5PY = False
 
 
 # Categories to Skip (bad mask quality in uCO3D)
@@ -427,6 +397,7 @@ PROMPT_SIMPLIFICATIONS = {
     'turtleneck_clothing': 'turtleneck',
     'vacuum_cleaner': 'vacuum',
     'vending_machine': 'vending machine',
+    'vat': 'wok',
     'waffle_iron': 'waffle maker',
     'walking_cane': 'cane',
     'walking_stick': 'walking stick',

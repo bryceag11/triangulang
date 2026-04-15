@@ -177,7 +177,7 @@ class TrianguLangModel(nn.Module):
         self.query_proj_mlp = query_proj_mlp
         self.no_query_proj = no_query_proj
         if no_query_proj:
-            # No projection — decoder output goes directly to mask_embed (like SAM3)
+            # No projection: decoder output goes directly to mask_embed (like SAM3)
             self.query_proj = nn.Identity()
         elif query_proj_mlp:
             # 3-layer MLP matching mask_embed's structure for better distribution bridging
@@ -232,7 +232,11 @@ class TrianguLangModel(nn.Module):
                 intrinsics_orig_hw=None, cached_depth=None,
                 da3_extrinsics=None, da3_intrinsics=None,
                 cross_view_mode=False, num_texts=1,
-                precomputed_sam3=None):
+                precomputed_sam3=None,
+                cached_pi3x_pointmaps=None):
+        # cached_pi3x_pointmaps: [B, H, W, 3] optional pre-computed world-frame pointmaps
+        #   from MapAnything/PI3X. If provided, bypasses DA3 + PointmapComputer entirely.
+
         # Cross-view mode: dispatch to forward_multiview() for true multi-view attention.
         # This path goes through DDP's __call__ hooks, ensuring proper gradient sync.
         if cross_view_mode:
@@ -243,7 +247,8 @@ class TrianguLangModel(nn.Module):
                 cached_depth=cached_depth,
                 point_prompts=point_prompts, point_labels=point_labels,
                 box_prompts=box_prompts, box_labels=box_labels,
-                da3_extrinsics=da3_extrinsics, da3_intrinsics=da3_intrinsics
+                da3_extrinsics=da3_extrinsics, da3_intrinsics=da3_intrinsics,
+                cached_pi3x_pointmaps=cached_pi3x_pointmaps,
             )
 
         B = images.shape[0]
@@ -259,7 +264,7 @@ class TrianguLangModel(nn.Module):
         # 1. Get depth and camera parameters from DA3 (or use cached depth)
         t0 = self._profile_start()
         if self.da3 is None:
-            # No DA3 model loaded (no GASA, no PE, no centroid) — skip depth entirely
+            # No DA3 model loaded (no GASA, no PE, no centroid): skip depth entirely
             depth = None
             da3_pose = None
             da3_intrinsics = None
@@ -362,12 +367,36 @@ class TrianguLangModel(nn.Module):
                 intrinsics_scaled = intrinsics.clone()
     
             # Compute pointmaps for GASA
+            # Option 0 (PI3X): Pre-computed world-frame pointmaps bypass DA3+PointmapComputer
             # Option 1 (default): Camera-frame (identity pose) - train/eval consistent
             # Option 2 (--use-da3-poses-for-gasa): World-frame using DA3-NESTED estimated poses
             # Always define identity_pose (needed for Plucker PE in GASA decoder)
             identity_pose = torch.eye(4, device=device, dtype=depth.dtype).unsqueeze(0).expand(B, -1, -1).contiguous()
-    
-            if self.use_gt_poses_for_gasa and gt_extrinsics is not None:
+
+            if cached_pi3x_pointmaps is not None:
+                # PI3X path: world-frame pointmaps already computed, skip PointmapComputer
+                _pi3x = cached_pi3x_pointmaps.to(device=device, dtype=sam3_images.dtype)
+                if _pi3x.shape[1:3] != (self.resolution, self.resolution):
+                    pts = _pi3x.permute(0, 3, 1, 2)  # [B, 3, H, W]
+                    pts = F.interpolate(pts, size=(self.resolution, self.resolution),
+                                        mode='bilinear', align_corners=False)
+                    _pi3x = pts.permute(0, 2, 3, 1)  # [B, H, W, 3]
+                if self.pointmap_normalize:
+                    valid = _pi3x.abs().sum(-1) > 0
+                    pts_flat = _pi3x.view(B, -1, 3)
+                    valid_flat = valid.view(B, -1)
+                    valid_counts = valid_flat.sum(dim=1, keepdim=True).clamp(min=1)
+                    center = (pts_flat * valid_flat.unsqueeze(-1)).sum(dim=1, keepdim=True) / valid_counts.unsqueeze(-1)
+                    pts_centered = pts_flat - center
+                    scale = (pts_centered.abs() * valid_flat.unsqueeze(-1)).sum(dim=1, keepdim=True) / valid_counts.unsqueeze(-1) / 3.0
+                    scale = scale.clamp(min=1e-6)
+                    pointmaps = (pts_centered / scale).view(B, *_pi3x.shape[1:3], 3)
+                    norm_params = {'center': center, 'scale': scale}
+                else:
+                    pointmaps = _pi3x
+                    norm_params = None
+                self._using_world_frame_gasa = True
+            elif self.use_gt_poses_for_gasa and gt_extrinsics is not None:
                 # Use GT COLMAP poses for world-frame GASA
                 # Globally consistent across ALL views (no chunk boundary issues)
                 gasa_pose = gt_extrinsics.to(device=device, dtype=depth.dtype)
@@ -405,7 +434,7 @@ class TrianguLangModel(nn.Module):
                 # Works with any depth source (cached DA3-NESTED or DA3METRIC).
                 # GT poses from COLMAP are consistent across ALL views (no chunk issues).
                 if not self._world_pm_debug_logged:
-                    print(f"[World PM] Using GT poses (--sheaf-use-gt-poses) → world-frame pointmaps")
+                    print(f"[World PM] Using GT poses (--sheaf-use-gt-poses) -> world-frame pointmaps")
                     self._world_pm_debug_logged = True
                 gt_pose = gt_extrinsics.to(device=device, dtype=depth.dtype)
                 world_pointmaps, _ = self.pointmap_computer(depth, gt_pose, intrinsics_scaled, normalize=False)
@@ -435,7 +464,7 @@ class TrianguLangModel(nn.Module):
                 # DA3METRIC gives metric depth in camera frame. GT poses give camera-to-world.
                 # Together they produce valid world-frame pointmaps.
                 if not self._world_pm_debug_logged:
-                    print(f"[World PM] Using GT poses + DA3METRIC metric depth → world-frame pointmaps")
+                    print(f"[World PM] Using GT poses + DA3METRIC metric depth -> world-frame pointmaps")
                     self._world_pm_debug_logged = True
                 gt_pose = gt_extrinsics.to(device=device, dtype=depth.dtype)
                 world_pointmaps, _ = self.pointmap_computer(depth, gt_pose, intrinsics_scaled, normalize=False)
@@ -458,7 +487,7 @@ class TrianguLangModel(nn.Module):
                 world_pointmaps_small = wpts.permute(0, 2, 3, 1)
 
         else:
-            # No depth (DA3 skipped) — set zero pointmaps for downstream code
+            # No depth (DA3 skipped): set zero pointmaps for downstream code
             pointmaps_small = torch.zeros(B, self.attn_map_size, self.attn_map_size, 3, device=device)
             pointmaps = torch.zeros(B, self.resolution, self.resolution, 3, device=device)
             norm_params = None
@@ -509,7 +538,7 @@ class TrianguLangModel(nn.Module):
                 idx_tensor = torch.tensor(text_idx_map, device=device, dtype=torch.long)
                 multi_text_features = unique_features[:, idx_tensor, :]  # [T, K*B, D]
 
-                # Extract primary text (first of K) for each batch item → [T, B, D]
+                # Extract primary text (first of K) for each batch item -> [T, B, D]
                 # Primary text indices: [0, K, 2K, ...] (stride by K through flat list)
                 K = num_texts
                 primary_indices = list(range(0, K * B, K))
@@ -554,8 +583,8 @@ class TrianguLangModel(nn.Module):
 
         # SAM3-STYLE MULTI-OBJECT: Expand batch by K after encoder
         # Backbone/encoder run once on [B, ...]. Then we expand:
-        #   encoder_memory: [B, L, D] → [B*K, L, D]
-        #   text_embedding: [K*B, T, D] → [B*K, T, D] (1 text per expanded item)
+        #   encoder_memory: [B, L, D] -> [B*K, L, D]
+        #   text_embedding: [K*B, T, D] -> [B*K, T, D] (1 text per expanded item)
         #   All other tensors: repeat_interleave K times
         # GASA decoder then runs on [B*K, ...] with num_texts=1 per item.
         sam3_mo_mode = getattr(self, 'sam3_multi_object', False) and num_texts > 1
@@ -564,12 +593,12 @@ class TrianguLangModel(nn.Module):
             # SAM3-style: expand batch by K, each item sees 1 text
             K = num_texts
             text_embedding = multi_text_features.transpose(0, 1)  # [K*B, T, D]
-            # Already in (B, K) order: [v0_k0, v0_k1, ..., v0_kK, v1_k0, ...] → [B*K, T, D]
+            # Already in (B, K) order: [v0_k0, v0_k1, ..., v0_kK, v1_k0, ...] -> [B*K, T, D]
             # Each group of K entries corresponds to one view's K texts
             T_per = text_embedding.shape[1]
             D_text = text_embedding.shape[2]
             # text_embedding is already [B*K, T, D] in correct order (B groups of K texts)
-            # Expand encoder memory: [B, L, D] → [B*K, L, D]
+            # Expand encoder memory: [B, L, D] -> [B*K, L, D]
             encoder_memory = encoder_memory.repeat_interleave(K, dim=0)
             # Expand depth, pointmaps, extrinsics etc.
             if depth is not None:
@@ -584,7 +613,7 @@ class TrianguLangModel(nn.Module):
                 gt_extrinsics = gt_extrinsics.repeat_interleave(K, dim=0)
             if gt_masks is not None:
                 if gt_masks.dim() == 4 and gt_masks.shape[1] == K:
-                    # Per-object GT [B, K, H, W] → [B*K, H, W]
+                    # Per-object GT [B, K, H, W] -> [B*K, H, W]
                     gt_masks = gt_masks.reshape(-1, *gt_masks.shape[2:])
                 else:
                     gt_masks = gt_masks.repeat_interleave(K, dim=0)
@@ -597,7 +626,7 @@ class TrianguLangModel(nn.Module):
                 pointmaps_small = pointmaps_small.repeat_interleave(K, dim=0)
             if world_pointmaps_small is not None:
                 world_pointmaps_small = world_pointmaps_small.repeat_interleave(K, dim=0)
-            # NOTE: Do NOT expand backbone_fpn here — it's too large at high res.
+            # NOTE: Do NOT expand backbone_fpn here. It's too large at high res.
             # Instead, we compute pixel_embed/instance_embeds from original FPN
             # and expand instance_embeds AFTER (much smaller). See segmentation head section below.
             # Expand identity_pose (fallback for decoder pose)
@@ -611,7 +640,7 @@ class TrianguLangModel(nn.Module):
             B = B * K  # Update batch size for rest of forward
             num_texts = 1  # Each expanded item has 1 text
         elif num_texts > 1:
-            # Original multi-object: reshape K*B text features → [B, K*T, D]
+            # Original multi-object: reshape K*B text features -> [B, K*T, D]
             text_embedding = multi_text_features.transpose(0, 1)  # [K*B, T, D]
             K = num_texts
             T_per = text_embedding.shape[1]
@@ -714,18 +743,18 @@ class TrianguLangModel(nn.Module):
         t0 = self._profile_start()
 
         # PER-TEXT DECODE: Process each text independently through the decoder
-        # This eliminates cross-text query competition — each text gets ALL Q queries.
+        # This eliminates cross-text query competition: each text gets ALL Q queries.
         # Equivalent to SAM3's per-text batch approach but batched for efficiency.
         if getattr(self, 'per_text_decode', False) and num_texts > 1 and tokens_per_text is not None:
             K = num_texts
             T_per = tokens_per_text
             D_text = text_embedding.shape[-1]
 
-            # Reshape text: [B, K*T, D] → [B, K, T, D]
+            # Reshape text: [B, K*T, D] -> [B, K, T, D]
             text_per_obj = text_embedding.view(B, K, T_per, D_text)
 
             # Pre-compute instance embeds once (frozen SAM3 params, no grad accumulates)
-            # NOTE: Do NOT use torch.no_grad() here — it breaks AMP GradScaler's inf checks
+            # NOTE: Do NOT use torch.no_grad() here. It breaks AMP GradScaler's inf checks
             fpn_features = backbone_out['backbone_fpn']
             pixel_embed = self.sam3.segmentation_head.pixel_decoder(fpn_features)
             instance_embeds = self.sam3.segmentation_head.instance_seg_head(pixel_embed)
@@ -823,7 +852,7 @@ class TrianguLangModel(nn.Module):
                 'pred_masks': pred_masks,
                 'pred_logits': pred_logits,
                 'all_masks': mask_preds,
-                'per_text_masks': pred_masks_stacked,  # [B, K, H, W] — one best mask per text
+                'per_text_masks': pred_masks_stacked,  # [B, K, H, W], one best mask per text
                 'grad_text_indices': grad_text_indices_list,  # Which texts have gradients for loss
                 'best_idx': best_idx,
                 'depth': depth,
@@ -871,7 +900,7 @@ class TrianguLangModel(nn.Module):
             pixel_embed = self.sam3.segmentation_head.pixel_decoder(fpn_features)
             instance_embeds = self.sam3.segmentation_head.instance_seg_head(pixel_embed)
 
-        # SAM3-MO: instance_embeds is [B_orig, D, H, W] — expand to [B_orig*K, D, H, W]
+        # SAM3-MO: instance_embeds is [B_orig, D, H, W]. Expand to [B_orig*K, D, H, W]
         # to match queries which are [B_orig*K, Q, D]. FPN was NOT expanded (too large).
         if sam3_mo_mode and hasattr(self, '_sam3_mo_K'):
             instance_embeds = instance_embeds.repeat_interleave(self._sam3_mo_K, dim=0)
@@ -884,7 +913,7 @@ class TrianguLangModel(nn.Module):
         self._profile_end("6_SAM3_seghead", t0)
 
         # 7. Select best mask based on strategy
-        # For multi-object (num_texts > 1): skip single-mask selection — training loop
+        # For multi-object (num_texts > 1): skip single-mask selection. Training loop
         # handles Hungarian matching per-view. Return all masks and scores.
         if num_texts > 1:
             # Multi-object: pred_logits uses mask_mean (text_scores is [B,Q,K], not compatible with [B,Q])
@@ -894,8 +923,8 @@ class TrianguLangModel(nn.Module):
             best_idx = torch.zeros(B, dtype=torch.long, device=device)
         else:
             # pred_logits source controlled by --pred-logits-source:
-            #   mask_mean: pred_logits = mask_preds.mean() — old text-agnostic behavior (proven, default)
-            #   text_scoring: pred_logits = joint_scores — text-aware via DotProductScoring
+            #   mask_mean: pred_logits = mask_preds.mean(), old text-agnostic behavior (proven, default)
+            #   text_scoring: pred_logits = joint_scores, text-aware via DotProductScoring
             if self.pred_logits_source == 'text_scoring' and joint_scores is not None:
                 pred_logits = joint_scores  # [B, Q] - text-query × presence scores
             else:
@@ -911,7 +940,7 @@ class TrianguLangModel(nn.Module):
 
             # Object-aware spatial selection: use mask centroids + depth for "nearest chair" etc.
             # This takes priority when spatial qualifier is present
-            # Spatial reasoning happens AFTER text scoring — filters among text-matched queries
+            # Spatial reasoning happens AFTER text scoring: filters among text-matched queries
             # At eval, use presence to weight mask selection (suppress absent objects)
             _eval_presence = presence_logit if not self.training else None
 
@@ -979,7 +1008,8 @@ class TrianguLangModel(nn.Module):
                           intrinsics_orig_hw=None, cached_depth=None,
                           point_prompts=None, point_labels=None,
                           box_prompts=None, box_labels=None,
-                          da3_extrinsics=None, da3_intrinsics=None):
+                          da3_extrinsics=None, da3_intrinsics=None,
+                          cached_pi3x_pointmaps=None):
         return _mu.forward_multiview(
             self, images, text_prompts, gt_masks,
             gt_extrinsics=gt_extrinsics, gt_intrinsics=gt_intrinsics,
@@ -987,5 +1017,6 @@ class TrianguLangModel(nn.Module):
             point_prompts=point_prompts, point_labels=point_labels,
             box_prompts=box_prompts, box_labels=box_labels,
             da3_extrinsics=da3_extrinsics, da3_intrinsics=da3_intrinsics,
+            cached_pi3x_pointmaps=cached_pi3x_pointmaps,
         )
 

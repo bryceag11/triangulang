@@ -26,6 +26,9 @@ from torch.utils.data import Dataset
 import numpy as np
 from PIL import Image
 
+import triangulang
+logger = triangulang.get_logger(__name__)
+
 def _is_main_process():
     """Check if this is the main process (rank 0) for DDP-safe printing."""
     return not dist.is_initialized() or dist.get_rank() == 0
@@ -165,6 +168,8 @@ class ScanNetPPMultiViewDataset(Dataset):
         exclude_categories: List[str] = None,
         include_categories: List[str] = None,
         num_objects_per_sample: int = 1,
+        use_cached_pi3x: bool = False,
+        pi3x_cache_name: str = 'ma_cache_train',
     ):
         self.data_root = Path(data_root)
         self.min_category_samples = min_category_samples
@@ -189,8 +194,14 @@ class ScanNetPPMultiViewDataset(Dataset):
         self.da3_cache_dir = self.data_root / da3_cache_name if use_cached_depth else None
         if use_cached_depth and self.da3_cache_dir and not self.da3_cache_dir.exists():
             if _is_main_process():
-                print(f"Warning: DA3 cache directory not found: {self.da3_cache_dir}")
-                print(f"  Run scripts/preprocess_da3.py or preprocess_da3_nested.py first.")
+                logger.warning(f"DA3 cache directory not found: {self.da3_cache_dir}")
+                logger.warning(f"  Run scripts/preprocess_da3.py or preprocess_da3_nested.py first.")
+        self.use_cached_pi3x = use_cached_pi3x
+        self.pi3x_cache_dir = self.data_root / pi3x_cache_name if use_cached_pi3x else None
+        if use_cached_pi3x and self.pi3x_cache_dir and not self.pi3x_cache_dir.exists():
+            if _is_main_process():
+                logger.warning(f"PI3X cache directory not found: {self.pi3x_cache_dir}")
+                logger.warning(f"  Run MapAnything caching script first.")
 
         self.centroid_cache = {}
         centroid_cache_path = self.data_root / "centroid_cache.json"
@@ -198,7 +209,7 @@ class ScanNetPPMultiViewDataset(Dataset):
             with open(centroid_cache_path) as f:
                 self.centroid_cache = json.load(f)
             if _is_main_process():
-                print(f"Loaded GT centroid cache: {len(self.centroid_cache)} scenes")
+                logger.info(f"Loaded GT centroid cache: {len(self.centroid_cache)} scenes")
 
         if obj_ids_dir:
             self.obj_ids_root = self.data_root / obj_ids_dir
@@ -214,7 +225,7 @@ class ScanNetPPMultiViewDataset(Dataset):
         self.scenes = []
         self.rasterizers = OrderedDict()  # Legacy - kept for compatibility
         if _is_main_process():
-            print(f"\nLoading ScanNet++ multi-view dataset ({split}, supervised={supervised})...")
+            logger.info(f"Loading ScanNet++ multi-view dataset ({split}, supervised={supervised})...")
         from tqdm import tqdm
         skipped = 0
 
@@ -267,7 +278,7 @@ class ScanNetPPMultiViewDataset(Dataset):
                 train_images = [img for img in train_images
                                 if (Path(img).stem if '.' in img else img) not in EXCLUDE_FRAMES[scene_id]]
                 if len(train_images) < before and _is_main_process():
-                    print(f"  {scene_id}: excluded {before - len(train_images)} bad frames")
+                    logger.debug(f"  {scene_id}: excluded {before - len(train_images)} bad frames")
 
             obj_to_label = {}
             label_to_obj_ids = defaultdict(list)
@@ -294,7 +305,7 @@ class ScanNetPPMultiViewDataset(Dataset):
             })
 
         if _is_main_process():
-            print(f"Loaded {len(self.scenes)} scenes ({skipped} skipped)")
+            logger.info(f"Loaded {len(self.scenes)} scenes ({skipped} skipped)")
 
         self._scene_chunk_map = {}  # scene_id -> {stem -> chunk_idx}
         if self.use_cached_depth and self.da3_cache_dir and self.da3_cache_dir.exists():
@@ -318,7 +329,7 @@ class ScanNetPPMultiViewDataset(Dataset):
                     stem_to_chunk[stem] = stem_idx // actual_chunk_size
                 self._scene_chunk_map[scene_id] = stem_to_chunk
             if self._scene_chunk_map and _is_main_process():
-                print(f"Built DA3 chunk map for {len(self._scene_chunk_map)} scenes")
+                logger.debug(f"Built DA3 chunk map for {len(self._scene_chunk_map)} scenes")
 
         self.scene_grouped = (num_objects_per_sample == 0)
 
@@ -389,7 +400,7 @@ class ScanNetPPMultiViewDataset(Dataset):
 
                 self._mesh_cache[scene_id] = (vertices, vertex_obj_ids)
             except Exception as e:
-                print(f"Warning: Failed to load mesh for {scene_id}: {e}")
+                logger.warning(f"Failed to load mesh for {scene_id}: {e}")
                 return None
 
         return get_object_centroid_3d(vertices, vertex_obj_ids, target_obj_id)
@@ -638,7 +649,7 @@ class ScanNetPPMultiViewDataset(Dataset):
         from tqdm import tqdm
         if not (enumerate_all_objects and supervised and not self.scene_grouped):
             if _is_main_process():
-                print(f"  {self.samples_per_scene} samples/scene = "
+                logger.info(f"  {self.samples_per_scene} samples/scene = "
                       f"{len(self.scenes) * self.samples_per_scene} samples/epoch")
             return
 
@@ -651,7 +662,7 @@ class ScanNetPPMultiViewDataset(Dataset):
 
         if cache_path.exists():
             if _is_main_process():
-                print(f"Loading object samples from cache: {cache_path.name}")
+                logger.info(f"Loading object samples from cache: {cache_path.name}")
             try:
                 with open(lock_path, 'w') as lf:
                     fcntl.flock(lf.fileno(), fcntl.LOCK_SH)
@@ -659,11 +670,11 @@ class ScanNetPPMultiViewDataset(Dataset):
                         with open(cache_path, 'rb') as f:
                             self.object_samples = pickle.load(f)['object_samples']
                         if _is_main_process():
-                            print(f"  Loaded {len(self.object_samples)} object samples from cache")
+                            logger.info(f"  Loaded {len(self.object_samples)} object samples from cache")
                     finally:
                         fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
             except Exception as e:
-                print(f"  Cache load failed: {e}, re-enumerating...")
+                logger.warning(f"  Cache load failed: {e}, re-enumerating...")
                 self.object_samples = []
 
         if not self.object_samples:
@@ -675,15 +686,15 @@ class ScanNetPPMultiViewDataset(Dataset):
                             with open(cache_path, 'rb') as f:
                                 self.object_samples = pickle.load(f)['object_samples']
                             if _is_main_process():
-                                print(f"  Loaded {len(self.object_samples)} object samples from cache (another process)")
+                                logger.info(f"  Loaded {len(self.object_samples)} object samples from cache (another process)")
                         except Exception as e:
-                            print(f"  Cache load failed: {e}, will enumerate...")
+                            logger.warning(f"  Cache load failed: {e}, will enumerate...")
                 finally:
                     fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
 
         if not self.object_samples:
             if _is_main_process():
-                print("Enumerating all objects across scenes (will cache for future runs)...")
+                logger.info("Enumerating all objects across scenes (will cache for future runs)...")
             total_found = filtered_out = total_chunk_filtered = 0
 
             for scene_idx, scene in enumerate(tqdm(self.scenes, desc="Enumerating objects", disable=not _is_main_process())):
@@ -744,14 +755,14 @@ class ScanNetPPMultiViewDataset(Dataset):
                     })
                 total_chunk_filtered += chunk_filtered
                 if bad_count > 0:
-                    print(f"    Skipped {bad_count} bad annotations in {scene_id}")
+                    logger.debug(f"    Skipped {bad_count} bad annotations in {scene_id}")
 
             if _is_main_process():
-                print(f"  Total objects found: {total_found}")
-                print(f"  Filtered (visible in <{views_per_sample} views): {filtered_out}")
+                logger.info(f"  Total objects found: {total_found}")
+                logger.info(f"  Filtered (visible in <{views_per_sample} views): {filtered_out}")
                 if total_chunk_filtered:
-                    print(f"    (of which {total_chunk_filtered} had no single DA3 chunk with enough views)")
-                print(f"  Valid object samples: {len(self.object_samples)}")
+                    logger.info(f"    (of which {total_chunk_filtered} had no single DA3 chunk with enough views)")
+                logger.info(f"  Valid object samples: {len(self.object_samples)}")
             with open(lock_path, 'w') as lf:
                 fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
                 try:
@@ -761,17 +772,17 @@ class ScanNetPPMultiViewDataset(Dataset):
                     fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
 
         if self.scene_grouped and _is_main_process():
-            print(f"  Scene-grouped mode: {len(self.scenes)} scenes/epoch")
+            logger.info(f"  Scene-grouped mode: {len(self.scenes)} scenes/epoch")
         if self.exclude_categories and self.object_samples:
             before = len(self.object_samples)
             self.object_samples = [s for s in self.object_samples if s['label'] not in self.exclude_categories]
             if _is_main_process() and len(self.object_samples) < before:
-                print(f"  Excluded {before - len(self.object_samples)} samples: {before} -> {len(self.object_samples)}")
+                logger.info(f"  Excluded {before - len(self.object_samples)} samples: {before} -> {len(self.object_samples)}")
         if self.include_categories and self.object_samples:
             before = len(self.object_samples)
             self.object_samples = [s for s in self.object_samples if s['label'] in self.include_categories]
             if _is_main_process() and len(self.object_samples) < before:
-                print(f"  Whitelist: kept {len(self.object_samples)}/{before} samples")
+                logger.info(f"  Whitelist: kept {len(self.object_samples)}/{before} samples")
         if self.min_category_samples > 1 and self.object_samples:
             counts = Counter(s['label'] for s in self.object_samples)
             rare = {cat for cat, n in counts.items() if n < self.min_category_samples}
@@ -779,7 +790,7 @@ class ScanNetPPMultiViewDataset(Dataset):
                 before = len(self.object_samples)
                 self.object_samples = [s for s in self.object_samples if s['label'] not in rare]
                 if _is_main_process():
-                    print(f"  Filtered {len(rare)} rare categories: {before} -> {len(self.object_samples)}")
+                    logger.info(f"  Filtered {len(rare)} rare categories: {before} -> {len(self.object_samples)}")
 
     def _apply_da3_cache(self, result, image_names, scene_id, gt_masks, target_obj_id, prompt,
                           obj_to_label=None):
@@ -801,12 +812,12 @@ class ScanNetPPMultiViewDataset(Dataset):
                     if 'intrinsics' in d: cached_int.append(d['intrinsics'].float())
                 except Exception as e:
                     if not hasattr(self, '_cache_warning_printed'):
-                        print(f"[DA3 Cache] Error loading {cache_path}: {e}")
+                        logger.warning(f"[DA3 Cache] Error loading {cache_path}: {e}")
                         self._cache_warning_printed = True
                     all_cached = False; break
             else:
                 if not hasattr(self, '_cache_warning_printed'):
-                    print(f"[DA3 Cache] Missing: {cache_path}  scene={scene_id} img={img_name}")
+                    logger.warning(f"[DA3 Cache] Missing: {cache_path}  scene={scene_id} img={img_name}")
                     self._cache_warning_printed = True
                 all_cached = False; break
 
@@ -842,7 +853,7 @@ class ScanNetPPMultiViewDataset(Dataset):
                 intr[:, 1, 2] *= scale_h
                 if not hasattr(self, '_intrinsics_scale_logged'):
                     self._intrinsics_scale_logged = True
-                    print(f"[Dataloader] Intrinsics scaled: {cache_h}x{cache_w} -> "
+                    logger.debug(f"[Dataloader] Intrinsics scaled: {cache_h}x{cache_w} -> "
                           f"{target_h}x{target_w}  fy {orig_fy:.1f} -> {intr[0,1,1].item():.1f}")
             result['cached_da3_intrinsics'] = intr
 
@@ -866,7 +877,7 @@ class ScanNetPPMultiViewDataset(Dataset):
                         result['spatial_context'] = ctx
             except Exception as e:
                 if not hasattr(self, '_spatial_context_warning_printed'):
-                    print(f"[Spatial Context] Warning: {e}")
+                    logger.warning(f"[Spatial Context] {e}")
                     self._spatial_context_warning_printed = True
 
     def __getitem__(self, idx):
@@ -964,6 +975,30 @@ class ScanNetPPMultiViewDataset(Dataset):
             self._apply_da3_cache(result, image_names, scene_id,
                                   gt_masks, target_obj_id, prompt,
                                   scene.get('obj_to_label', {}))
+
+        # Load PI3X cached world-frame pointmaps if available
+        if self.use_cached_pi3x and self.pi3x_cache_dir is not None:
+            pi3x_pointmaps = []
+            all_loaded = True
+            for img_name in image_names:
+                cache_path = self.pi3x_cache_dir / scene_id / f"{Path(img_name).stem}.pt"
+                if cache_path.exists():
+                    try:
+                        cache_data = torch.load(cache_path, map_location='cpu', weights_only=False)
+                        pointmap = torch.as_tensor(cache_data['pointmap']).float()  # [H, W, 3]
+                        pi3x_pointmaps.append(pointmap)
+                        # Also load depth from PI3X if not already cached
+                        if 'cached_depth' not in result and 'depth' in cache_data:
+                            pass  # DA3 cache takes priority for depth
+                    except Exception:
+                        all_loaded = False
+                        break
+                else:
+                    all_loaded = False
+                    break
+            if all_loaded and len(pi3x_pointmaps) == len(image_names):
+                result['cached_pi3x_pointmaps'] = torch.stack(pi3x_pointmaps)  # [N, H, W, 3]
+
         return result
 
 # Backward-compatible re-exports (keep existing import statements working)

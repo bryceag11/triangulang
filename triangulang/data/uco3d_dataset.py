@@ -30,12 +30,9 @@ Usage:
 """
 
 import os
-import sys
-import json
 import random
-import hashlib
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Union
+from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 
 import numpy as np
@@ -44,6 +41,9 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 from PIL import Image
 
+import triangulang
+logger = triangulang.get_logger(__name__)
+
 # Try to import uCO3D package
 try:
     from uco3d import UCO3DDataset as UCO3DDatasetBase, UCO3DFrameDataBuilder
@@ -51,7 +51,7 @@ try:
     HAS_UCO3D = True
 except ImportError:
     HAS_UCO3D = False
-    print("[uCO3D] Warning: uco3d package not installed. Using standalone loader.")
+    logger.warning("[uCO3D] uco3d package not installed. Using standalone loader.")
 
 # Try to import h5py for depth loading
 try:
@@ -164,16 +164,16 @@ class UCO3DMultiViewDataset(Dataset):
                     "or pass data_root argument."
                 )
 
-        print(f"[uCO3D] Loading from {self.data_root}")
+        logger.info(f"[uCO3D] Loading from {self.data_root}")
 
         # Set up DA3 cache directory
         self.da3_cache_dir = self.data_root / da3_cache_name if use_cached_depth else None
         if use_cached_depth:
             if self.da3_cache_dir and self.da3_cache_dir.exists():
-                print(f"[uCO3D] Using cached depth from {self.da3_cache_dir}")
+                logger.info(f"[uCO3D] Using cached depth from {self.da3_cache_dir}")
             else:
-                print(f"[uCO3D] Warning: DA3 cache not found: {self.da3_cache_dir}")
-                print(f"  Run scripts/preprocess_da3_uco3d.py first.")
+                logger.warning(f"[uCO3D] DA3 cache not found: {self.da3_cache_dir}")
+                logger.warning(f"  Run scripts/preprocess_da3_uco3d.py first.")
 
         # Initialize sequences
         self.sequences = []
@@ -183,13 +183,12 @@ class UCO3DMultiViewDataset(Dataset):
         if num_sequences is not None and len(self.sequences) > num_sequences:
             self._sample_representative_sequences(num_sequences)
 
-        print(f"[uCO3D] Loaded {len(self.sequences)} sequences, "
+        logger.info(f"[uCO3D] Loaded {len(self.sequences)} sequences, "
               f"{self.frames_per_sequence} frames each, "
               f"{self.num_views} views per sample")
 
+    # Initialize sequence list from metadata
     def _init_sequences(self, subset_list: str):
-        """Initialize sequence list from metadata."""
-
         # Try official sqlite set_lists first (has proper train/val splits)
         sqlite_path = self.data_root / "set_lists" / subset_list
         if sqlite_path.exists():
@@ -199,12 +198,12 @@ class UCO3DMultiViewDataset(Dataset):
         else:
             self._init_standalone()
 
+    # Initialize using official uCO3D package
     def _init_with_uco3d_package(self, subset_list: str):
-        """Initialize using official uCO3D package."""
         subset_lists_file = self.data_root / "set_lists" / subset_list
 
         if not subset_lists_file.exists():
-            print(f"[uCO3D] Subset list not found: {subset_lists_file}")
+            logger.warning(f"[uCO3D] Subset list not found: {subset_lists_file}")
             self._init_standalone()
             return
 
@@ -264,17 +263,17 @@ class UCO3DMultiViewDataset(Dataset):
                     'category': category,
                 })
 
+    # Initialize from official sqlite set_lists (proper train/val split or k-fold CV)
     def _init_from_sqlite(self, subset_list: str):
-        """Initialize from official sqlite set_lists (proper train/val split or k-fold CV)."""
         import sqlite3
 
         sqlite_path = self.data_root / "set_lists" / subset_list
         if not sqlite_path.exists():
-            print(f"[uCO3D] Set list not found: {sqlite_path}, falling back to directory scan")
+            logger.warning(f"[uCO3D] Set list not found: {sqlite_path}, falling back to directory scan")
             self._init_standalone()
             return
 
-        print(f"[uCO3D] Loading from sqlite: {sqlite_path}")
+        logger.info(f"[uCO3D] Loading from sqlite: {sqlite_path}")
         conn = sqlite3.connect(str(sqlite_path))
         cursor = conn.cursor()
 
@@ -309,8 +308,8 @@ class UCO3DMultiViewDataset(Dataset):
             # Strip the subset column (4th element) since we determined split via fold
             rows = [(r[0], r[1], r[2]) for r in rows]
 
-            print(f"[uCO3D] K-fold CV: {self.num_folds} folds, fold {self.fold} as val")
-            print(f"[uCO3D] Found {len(rows)} sequences for split '{self.split}' (fold {self.fold})")
+            logger.info(f"[uCO3D] K-fold CV: {self.num_folds} folds, fold {self.fold} as val")
+            logger.info(f"[uCO3D] Found {len(rows)} sequences for split '{self.split}' (fold {self.fold})")
         else:
             # Standard train/val split from dataset
             cursor.execute(
@@ -320,7 +319,7 @@ class UCO3DMultiViewDataset(Dataset):
             rows = cursor.fetchall()
             conn.close()
 
-            print(f"[uCO3D] Found {len(rows)} sequences for split '{self.split}'")
+            logger.info(f"[uCO3D] Found {len(rows)} sequences for split '{self.split}'")
 
         for seq_name, category, super_category in rows:
             # Skip categories with bad mask quality
@@ -347,12 +346,12 @@ class UCO3DMultiViewDataset(Dataset):
                     'depth_file': seq_path / "depth_maps.h5" if self.use_depth else None,
                 })
 
-        print(f"[uCO3D] Loaded {len(self.sequences)} sequences with valid videos")
+        logger.info(f"[uCO3D] Loaded {len(self.sequences)} sequences with valid videos")
 
+    # Initialize without uCO3D package (directory scanning) - no train/val separation
     def _init_standalone(self):
-        """Initialize without uCO3D package (directory scanning) - no train/val separation."""
-        print("[uCO3D] Using standalone initialization (scanning directories)")
-        print("[uCO3D] WARNING: No train/val separation - use sqlite set_lists for proper splits")
+        logger.info("[uCO3D] Using standalone initialization (scanning directories)")
+        logger.warning("[uCO3D] No train/val separation - use sqlite set_lists for proper splits")
 
         # Scan for sequences in super_category/category/sequence structure
         for super_cat_dir in self.data_root.iterdir():
@@ -396,10 +395,10 @@ class UCO3DMultiViewDataset(Dataset):
                             'depth_file': seq_dir / "depth_maps.h5" if self.use_depth else None,
                         })
 
-        print(f"[uCO3D] Found {len(self.sequences)} sequences via directory scan")
+        logger.info(f"[uCO3D] Found {len(self.sequences)} sequences via directory scan")
 
+    # Sample representative sequences across categories
     def _sample_representative_sequences(self, num_sequences: int):
-        """Sample representative sequences across categories."""
         random.seed(self.seed)
 
         # Group by category
@@ -428,14 +427,14 @@ class UCO3DMultiViewDataset(Dataset):
             sampled = random.sample(sampled, num_sequences)
 
         self.sequences = sampled
-        print(f"[uCO3D] Sampled {len(self.sequences)} representative sequences "
+        logger.info(f"[uCO3D] Sampled {len(self.sequences)} representative sequences "
               f"from {num_categories} categories")
 
     def __len__(self):
         return len(self.sequences) * self.samples_per_sequence
 
+    # Return a valid but empty sample to avoid DDP hangs on bad sequences
     def _make_fallback_sample(self, category: str) -> Dict:
-        """Return a valid but empty sample to avoid DDP hangs on bad sequences."""
         prompt = normalize_prompt(category) if self.normalize_prompts else category
         return {
             'images': torch.zeros(self.num_views, 3, self.image_size[0], self.image_size[1]),
@@ -451,13 +450,13 @@ class UCO3DMultiViewDataset(Dataset):
             'category': category,
         }
 
+    # Load specific frames from video file
     def _load_frames_from_video(
         self,
         video_path: Path,
         frame_indices: List[int],
         is_mask: bool = False
     ) -> List[np.ndarray]:
-        """Load specific frames from video file."""
         import cv2
 
         cap = cv2.VideoCapture(str(video_path))
@@ -494,12 +493,12 @@ class UCO3DMultiViewDataset(Dataset):
         cap.release()
         return frames
 
+    # Load depth maps from HDF5 file
     def _load_depth_from_h5(
         self,
         h5_path: Path,
         frame_indices: List[int]
     ) -> List[np.ndarray]:
-        """Load depth maps from HDF5 file."""
         if not HAS_H5PY:
             return [np.ones((self.image_size[0], self.image_size[1]), dtype=np.float32)
                     for _ in frame_indices]
@@ -525,8 +524,8 @@ class UCO3DMultiViewDataset(Dataset):
 
         return depths
 
+    # Uniformly sample frame indices
     def _sample_frame_indices(self, total_frames: int, num_samples: int) -> List[int]:
-        """Uniformly sample frame indices."""
         if total_frames <= num_samples:
             return list(range(total_frames))
 
@@ -549,12 +548,12 @@ class UCO3DMultiViewDataset(Dataset):
             else:
                 return self._getitem_standalone(seq, sample_idx)
         except Exception as e:
-            # Bad video/sequence — return a fallback sample to avoid DDP hang
-            print(f"[uCO3D WARNING] Failed to load sequence {seq.get('sequence_name', seq_idx)}: {e}")
+            # Bad video/sequence, return a fallback sample to avoid DDP hang
+            logger.warning(f"[uCO3D] Failed to load sequence {seq.get('sequence_name', seq_idx)}: {e}")
             return self._make_fallback_sample(category)
 
+    # Load sample using uCO3D package
     def _getitem_uco3d(self, seq: Dict, sample_idx: int) -> Dict:
-        """Load sample using uCO3D package."""
         frame_indices = seq['frame_indices']
 
         # Sample views from available frames
@@ -659,8 +658,8 @@ class UCO3DMultiViewDataset(Dataset):
 
         return result
 
+    # Load sample using direct video loading (no uCO3D package)
     def _getitem_standalone(self, seq: Dict, sample_idx: int) -> Dict:
-        """Load sample using direct video loading (no uCO3D package)."""
         import cv2
 
         rgb_video = seq['rgb_video']

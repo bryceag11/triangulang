@@ -15,6 +15,9 @@ from torch.utils.data import Dataset
 import numpy as np
 from PIL import Image
 
+import triangulang
+logger = triangulang.get_logger(__name__)
+
 
 # Actual scene names in SpinNeRF dataset
 SPINNERF_SCENES = ['1', '2', '3', '4', '7', '9', '10', '12', 'book', 'trash']
@@ -240,7 +243,7 @@ class SpinNeRFDataset(Dataset):
         # Load scene data
         self._load_scenes()
 
-        print(f"SpinNeRF Dataset: {len(self.scenes)} scenes, {len(self)} samples")
+        logger.info(f"SpinNeRF Dataset: {len(self.scenes)} scenes, {len(self)} samples")
 
     def _load_scenes(self):
         """Load metadata for each scene."""

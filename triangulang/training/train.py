@@ -21,25 +21,16 @@ cv2.setNumThreads(0)
 cv2.ocl.setUseOpenCL(False)
 
 import sys
-import os
 import gc
-from pathlib import Path
-from datetime import datetime
-from contextlib import nullcontext
+import json
 import random
-import math
 import time
+from pathlib import Path
+from contextlib import nullcontext
 
 import tyro
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from functools import partial
-from torch.utils.data import DataLoader, WeightedRandomSampler
-from collections import Counter
-from torch.amp import autocast, GradScaler
 from tqdm import tqdm
-import numpy as np
 import psutil
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -50,85 +41,23 @@ sys.path.insert(0, str(PROJECT_ROOT / 'depth_anything_v3' / 'src'))
 # DDP support - auto-detects if running via torchrun (must be after sys.path setup)
 from triangulang.utils.ddp_utils import DDPManager
 
-from triangulang.utils.scannetpp_loader import ScanNetPPMultiViewDataset
-from triangulang.data.dataset_factory import get_dataset, get_dataset_config
-
-# SAM3 imports
-from sam3 import build_sam3_image_model
-from sam3.model.geometry_encoders import Prompt
-from sam3.model.data_misc import FindStage
-from sam3.sam.prompt_encoder import PositionEmbeddingRandom
-from sam3.model.model_misc import MLP as SAM3MLP
-
-# DA3 imports
-from depth_anything_3.api import DepthAnything3
-from depth_anything_3.utils.visualize import visualize_depth
-
-# GASA imports
-from triangulang.models.gasa import (
-    PointmapComputer,
-    WorldSpacePositionalEncoding,
-    CameraRelativePositionalEncoding,
-    PluckerEmbedding,
-    RayRoPE3D,
-)
-
-# Sheaf consistency losses
-from triangulang.losses.sheaf_losses import SheafConsistencyLoss, FeatureSheafLoss, AsymmetricRestrictionSheaf
-
-# Spatial reasoning utilities
 from triangulang.utils.spatial_reasoning import (
     parse_spatial_qualifier,
-    parse_relational_query,
     get_spatial_qualifier_idx,
-    spatial_to_pseudo_point_tensor,
-    SpatialAugmentor,
-    GTAwareSpatialAugmentor,
-    SpatialContext,
-    SPATIAL_QUALIFIER_TO_IDX,
 )
 from triangulang.training.config import TrainConfig
-
-from triangulang import BPE_PATH as _BPE_PATH
-
-# Extracted utilities
-from triangulang.utils.lora import LoRALayer, LoRAManager
-from triangulang.utils.metrics import (
-    compute_iou, compute_recall, compute_per_mask_ious,
-    compute_mean_accuracy, compute_gt_centroid, CategoryMetricsTracker,
-)
-from triangulang.losses.segmentation import (
-    focal_loss, dice_loss, centroid_loss, boundary_loss,
-    lovasz_grad, lovasz_hinge_loss, lovasz_loss, point_sampled_loss,
-    align_loss, contrastive_mask_loss, segmentation_loss,
-)
-from triangulang.losses.spatial_losses import spatial_ranking_loss, spatial_selection_loss
-from triangulang.utils.matching import hungarian_match, text_greedy_match
-from triangulang.utils.geometry import triangulate_centroid
+from triangulang.utils.metrics import CategoryMetricsTracker
 from triangulang.training.forward_passes import (
     _forward_cross_view, _forward_batch_views, _forward_sequential,
 )
-from triangulang.training.train_helpers import (
-    set_seed, collate_fn, run_validation, visualize_predictions,
+from triangulang.training.train_helpers import visualize_predictions
+from triangulang.training.train_setup import (
     _setup_config, _init_environment, _load_datasets, _build_model,
     _setup_training, _save_checkpoint, _finalize_epoch, _run_validation_and_save,
 )
 
-from triangulang.models.gasa_decoder import (
-    GASADecoderLayer,
-    MaskRefiner,
-    SpatialAttentionBias,
-    TextConditionedSpatialBias,
-    GASADecoder,
-)
-from triangulang.models.triangulang_model import TrianguLangModel
-
-
-# The following classes have been extracted to separate files:
-# - GASADecoderLayer, MaskRefiner, SpatialAttentionBias,
-#   TextConditionedSpatialBias, GASADecoder -> triangulang.models.gasa_decoder
-# - TrianguLangModel -> triangulang.models.triangulang_model
-
+import triangulang
+logger = triangulang.get_logger(__name__)
 
 
 def main():
@@ -140,6 +69,7 @@ def main():
     # Initialize DDP (auto-detects if running via torchrun)
     ddp = DDPManager()
     ddp.init()
+    triangulang.configure_logging(ddp.rank)
     device = _init_environment(args, ddp)
 
     dataset, dataloader, val_dataset, val_dataloader = _load_datasets(args, ddp)
@@ -151,7 +81,6 @@ def main():
 
     # Only create dirs and save config on main process
     if ddp.is_main:
-        import json
         run_dir.mkdir(parents=True, exist_ok=True)
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         cfg_save = vars(args).copy()
@@ -161,26 +90,25 @@ def main():
         cfg_save['use_point_prompts'] = use_point
         with open(run_dir / 'config.json', 'w') as f:
             json.dump(cfg_save, f, indent=2)
-        print(f"Config saved to {run_dir / 'config.json'}")
+        logger.info(f"Config saved to {run_dir / 'config.json'}")
         with open(checkpoint_dir / 'config.json', 'w') as f:
             json.dump(cfg_save, f, indent=2)
-        print(f"Config also saved to {checkpoint_dir / 'config.json'}")
+        logger.debug(f"Config also saved to {checkpoint_dir / 'config.json'}")
 
     ddp.barrier()  # Sync before training
-    ddp.print(f"\nTraining for {args.epochs} epochs (starting from epoch {start_epoch + 1})...")
+    logger.info(f"Training for {args.epochs} epochs (starting from epoch {start_epoch + 1})...")
 
     cat_metrics = CategoryMetricsTracker()
     history = []
     if ddp.is_main:
-        import json
         history_path = run_dir / 'history.json'
         if history_path.exists():
             try:
                 with open(history_path, 'r') as f:
                     history = json.load(f)
-                print(f"Loaded existing history with {len(history)} epochs")
+                logger.info(f"Loaded existing history with {len(history)} epochs")
             except Exception as e:
-                print(f"Warning: Could not load history.json: {e}")
+                logger.info(f"Warning: Could not load history.json: {e}")
                 history = []
 
     num_samples = 0
@@ -189,7 +117,7 @@ def main():
     for epoch in range(start_epoch, args.epochs):
         # Early stopping check
         if args.stop_at_epoch > 0 and epoch >= args.stop_at_epoch:
-            ddp.print(f"\n[Early Stop] Reached --stop-at-epoch {args.stop_at_epoch}, stopping training.")
+            logger.info(f"[Early Stop] Reached --stop-at-epoch {args.stop_at_epoch}, stopping training.")
             break
 
         ddp.set_epoch(epoch)  # Important for proper shuffling in DDP
@@ -247,7 +175,7 @@ def main():
             if cached_da3_extrinsics is not None:
                 cached_da3_extrinsics = cached_da3_extrinsics.to(device, non_blocking=True)
                 # NOTE: Cache already stores c2w (camera-to-world) after Feb 2026 fix.
-                # preprocess_da3_nested.py inverts w2c→c2w via extract_c2w_from_extrinsics().
+                # preprocess_da3_nested.py inverts w2c->c2w via extract_c2w_from_extrinsics().
                 # DO NOT invert again here - that was causing double-inversion bug!
             if cached_da3_intrinsics is not None:
                 cached_da3_intrinsics = cached_da3_intrinsics.to(device, non_blocking=True)
@@ -255,27 +183,27 @@ def main():
             # Log cached depth status (first batch of each epoch)
             if batch_idx == 0 and ddp.is_main:
                 if cached_depth is not None:
-                    ddp.print(f"  [Epoch {epoch}] cached_depth: {cached_depth.shape} ✓ DA3 BYPASSED")
+                    logger.debug(f"  [Epoch {epoch}] cached_depth: {cached_depth.shape} DA3 BYPASSED")
                 else:
-                    ddp.print(f"  [Epoch {epoch}] cached_depth: None ✗ DA3 RUNNING LIVE")
+                    logger.debug(f"  [Epoch {epoch}] cached_depth: None - DA3 RUNNING LIVE")
 
             # Log pose configuration (first batch only)
             if batch_idx == 0 and epoch == start_epoch and ddp.is_main:
                 if args.no_gt_poses:
-                    ddp.print(f"  ⚠ GT poses suppressed (--no-gt-poses) → using DA3-NESTED estimated poses")
+                    logger.debug(f"  GT poses suppressed (--no-gt-poses) -> using DA3-NESTED estimated poses")
                 if args.use_da3_poses_for_gasa and cached_da3_extrinsics is not None:
-                    ddp.print(f"  ✓ World PE / GASA: Using DA3-NESTED estimated poses → world-frame pointmaps")
+                    logger.debug(f"  World PE / GASA: Using DA3-NESTED estimated poses -> world-frame pointmaps")
                 else:
-                    ddp.print(f"  ✓ World PE / GASA: Using camera-frame pointmaps (train/eval consistent)")
+                    logger.debug(f"  World PE / GASA: Using camera-frame pointmaps (train/eval consistent)")
                 if sheaf_loss_fn is not None:
                     if gt_extrinsics is not None:
-                        ddp.print(f"  ✓ Sheaf loss: Using GT extrinsics → world-frame pointmaps")
+                        logger.debug(f"  Sheaf loss: Using GT extrinsics -> world-frame pointmaps")
                     elif args.no_gt_poses and cached_da3_extrinsics is not None:
-                        ddp.print(f"  ✓ Sheaf loss: Using DA3-NESTED estimated poses (calibration-free mode)")
+                        logger.debug(f"  Sheaf loss: Using DA3-NESTED estimated poses (calibration-free mode)")
                     elif model.da3_has_pose_estimation if hasattr(model, 'da3_has_pose_estimation') else False:
-                        ddp.print(f"  ⚠ Sheaf loss: Using DA3-estimated poses → world-frame pointmaps")
+                        logger.debug(f"  Sheaf loss: Using DA3-estimated poses -> world-frame pointmaps")
                     else:
-                        ddp.print(f"  ⚠ Sheaf loss: No world-frame poses available → camera-frame (less effective)")
+                        logger.debug(f"  Sheaf loss: No world-frame poses available -> camera-frame (less effective)")
 
             # Apply spatial augmentation if enabled (adds "nearest", "leftmost", etc.)
             # GT-aware mode uses actual mask positions; otherwise random qualifiers
@@ -312,7 +240,7 @@ def main():
 
                 # Log stats periodically (end of first epoch)
                 if batch_idx == 0 and epoch > start_epoch and ddp.is_main:
-                    ddp.print(f"  [Spatial] {gt_aware_spatial.get_stats_summary()}")
+                    logger.debug(f"  [Spatial] {gt_aware_spatial.get_stats_summary()}")
 
             elif spatial_augmentor is not None:
                 # Random spatial augmentation
@@ -443,7 +371,7 @@ def main():
                         visualize_predictions(run_dir, f"e{epoch+1}_b{batch_idx+1}", last_vis_data['images'],
                                               last_vis_data['gt_masks'], last_vis_data['outputs'], last_vis_data['prompts'])
                     except Exception as e:
-                        print(f"  Batch vis failed: {e}")
+                        logger.debug(f"  Batch vis failed: {e}")
 
             if num_samples > 0:
                 cur_miou = cat_metrics.get_miou()
@@ -469,7 +397,7 @@ def main():
                         ckpt = _save_checkpoint(base_model, optimizer, scheduler, scaler, lora_manager,
                                                 args, epoch, best_iou, best_val_miou, checkpoint_dir)
                         torch.save(ckpt, checkpoint_dir / 'best.pt')
-                        print(f"  -> New best train IoU! Saved to {checkpoint_dir / 'best.pt'}")
+                        logger.info(f"  -> New best train IoU! Saved to {checkpoint_dir / 'best.pt'}")
             else:
                 if avg_iou > best_iou:
                     best_iou = avg_iou
@@ -483,7 +411,6 @@ def main():
 
             # Save summary every epoch (so we don't lose progress if interrupted)
             if ddp.is_main:
-                import json
                 cat_summary = cat_metrics.summary()
                 epoch_summary = {
                     'best_iou': best_iou,
@@ -565,9 +492,9 @@ def main():
             if ddp.world_size > 1:
                 torch.distributed.broadcast(should_stop, src=0)
             if should_stop.item():
-                ddp.print(f"\n[Low RAM] Available: {available_ram_gb:.1f}GB < threshold {args.min_ram_gb}GB")
-                ddp.print(f"[Low RAM] Stopping gracefully. Checkpoint saved at epoch {epoch+1}.")
-                ddp.print(f"[Low RAM] Resume with: --resume {checkpoint_dir}")
+                logger.info(f"[Low RAM] Available: {available_ram_gb:.1f}GB < threshold {args.min_ram_gb}GB")
+                logger.info(f"[Low RAM] Stopping gracefully. Checkpoint saved at epoch {epoch+1}.")
+                logger.info(f"[Low RAM] Resume with: --resume {checkpoint_dir}")
                 break
 
         # IMPORTANT: Add barrier to ensure all ranks complete the epoch before starting the next one
@@ -605,14 +532,14 @@ def main():
         # Print per-category breakdown
         if cat_summary['per_category_iou']:
             sorted_cats = sorted(cat_summary['per_category_iou'].items(), key=lambda x: x[1], reverse=True)
-            ddp.print(f"\nPer-category IoU (top 10):")
+            logger.info("Per-category IoU (top 10):")
             for cat, iou in sorted_cats[:10]:
-                ddp.print(f"  {cat}: {100*iou:.1f}%")
+                logger.info(f"  {cat}: {100*iou:.1f}%")
 
     val_str = f", Best Val mIoU: {100*best_val_miou:.1f}%" if best_val_miou > 0 else ""
-    ddp.print(f"\nTraining complete! Best IoU: {100*best_iou:.1f}%{val_str}, Final mIoU: {100*final_miou:.1f}%")
-    ddp.print(f"Summary saved to {run_dir / 'summary.json'}")
-    ddp.print(f"Per-epoch history saved to {run_dir / 'history.json'}")
+    print(f"Training complete! Best IoU: {100*best_iou:.1f}%{val_str}, Final mIoU: {100*final_miou:.1f}%")
+    print(f"Summary saved to {run_dir / 'summary.json'}")
+    print(f"Per-epoch history saved to {run_dir / 'history.json'}")
     ddp.cleanup()
 
 

@@ -1,5 +1,8 @@
 """Forward pass helpers for TrianguLang training loop."""
+import triangulang
 import torch
+
+logger = triangulang.get_logger(__name__)
 import torch.nn.functional as F
 from torch.amp import autocast
 from triangulang.losses.segmentation import (
@@ -39,6 +42,9 @@ def _forward_cross_view(model, base_model, images, gt_masks, prompts, batch, arg
         with autocast('cuda'):
             # Call through DDP wrapper (cross_view_mode dispatches to forward_multiview)
             # This ensures DDP's gradient sync hooks are properly triggered
+            cached_pi3x = batch.get('cached_pi3x_pointmaps')
+            if cached_pi3x is not None:
+                cached_pi3x = cached_pi3x.to(device, non_blocking=True)
             outputs = model(
                 images, prompts, gt_masks.float(),
                 gt_extrinsics=gt_extrinsics,
@@ -47,7 +53,8 @@ def _forward_cross_view(model, base_model, images, gt_masks, prompts, batch, arg
                 cached_depth=cached_depth,
                 da3_extrinsics=cached_da3_extrinsics,
                 da3_intrinsics=cached_da3_intrinsics,
-                cross_view_mode=True
+                cross_view_mode=True,
+                cached_pi3x_pointmaps=cached_pi3x,
             )
             # pred_masks: [B, N, H, W]
             pred = outputs['pred_masks']
@@ -313,7 +320,7 @@ def _forward_cross_view(model, base_model, images, gt_masks, prompts, batch, arg
             valid = n_valid
 
     except Exception as e:
-        ddp.print(f"Error in cross-view forward: {e}")
+        logger.warning(f"Error in cross-view forward: {e}")
         import traceback
         traceback.print_exc()
 
@@ -354,7 +361,7 @@ def _forward_batch_views(model, base_model, images, gt_masks, prompts, batch, ar
         ).float()  # [B*N, K, H, W]
         # For valid_mask: use ANY object's coverage (not just primary)
         # In scene_grouped mode, the primary object may only be visible in a few views,
-        # but other objects ARE visible → must not zero out their loss
+        # but other objects ARE visible -> must not zero out their loss
         all_gt = all_gt_multi.max(dim=1).values  # [B*N, H, W] union of all objects
         # Flatten multi-object prompts: each view gets K prompts
         multi_object_prompts_list = batch['multi_object_prompts']  # List[List[str]] [B][K]
@@ -425,6 +432,10 @@ def _forward_batch_views(model, base_model, images, gt_masks, prompts, batch, ar
             # For per-text decode, pass multi-object GT [B*N, K, H, W] so each
             # text gets oracle mask selection against its own GT
             fwd_gt = all_gt_multi if ((args.per_text_decode or getattr(args, 'sam3_multi_object', False)) and all_gt_multi is not None) else all_gt
+            # Load PI3X cached pointmaps if available
+            cached_pi3x = batch.get('cached_pi3x_pointmaps')
+            if cached_pi3x is not None:
+                cached_pi3x = cached_pi3x.reshape(B * N_views, *cached_pi3x.shape[2:]).to(device, non_blocking=True)
             outputs = model(all_views, all_prompts, fwd_gt,
                           gt_extrinsics=all_extrinsics,
                           gt_intrinsics=all_intrinsics,
@@ -433,12 +444,13 @@ def _forward_batch_views(model, base_model, images, gt_masks, prompts, batch, ar
                           cached_depth=all_cached_depth,
                           da3_extrinsics=all_da3_extrinsics,
                           da3_intrinsics=all_da3_intrinsics,
-                          num_texts=multi_object_K)
+                          num_texts=multi_object_K,
+                          cached_pi3x_pointmaps=cached_pi3x)
 
             # SAM3-MO: outputs are [B*N*K, ...], reshape GT and valid_mask
             if outputs.get('sam3_mo_K') is not None:
                 sam3_K = outputs['sam3_mo_K']
-                # Reshape GT: [B*N, K, H, W] → [B*N*K, H, W]
+                # Reshape GT: [B*N, K, H, W] -> [B*N*K, H, W]
                 all_gt = all_gt_multi.reshape(-1, *all_gt_multi.shape[2:])
                 # Per-object valid mask
                 valid_mask = (all_gt.sum(dim=(-2, -1)) > 0)
@@ -816,7 +828,7 @@ def _forward_batch_views(model, base_model, images, gt_masks, prompts, batch, ar
                             contrast_loss = contrastive_mask_loss(scores, best_idx, margin=args.contrastive_margin)
                             loss = loss + args.contrastive_weight * contrast_loss / n_valid
 
-            # Text scoring loss: REMOVED — pred_logits now comes from DotProductScoring head,
+            # Text scoring loss: REMOVED. pred_logits now comes from DotProductScoring head,
             # so the existing align loss trains text-query matching end-to-end (SAM3-style).
             # The separate cross-entropy text scoring loss was redundant.
 
@@ -974,7 +986,7 @@ def _forward_batch_views(model, base_model, images, gt_masks, prompts, batch, ar
                              'prompts': prompts}
 
     except Exception as e:
-        ddp.print(f"Error in batched forward: {e}")
+        logger.warning(f"Error in batched forward: {e}")
         import traceback
         traceback.print_exc()
 

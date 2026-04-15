@@ -17,6 +17,9 @@ from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from torch.utils.data.distributed import DistributedSampler
 import numpy as np
 
+import triangulang
+logger = triangulang.get_logger(__name__)
+
 
 class DistributedWeightedSampler:
     """
@@ -117,7 +120,7 @@ class DDPManager:
         """
         # Check if we're in distributed mode
         if "WORLD_SIZE" not in os.environ:
-            print("[DDP] Running in single-GPU mode (WORLD_SIZE not set)")
+            logger.info("[DDP] Running in single-GPU mode (WORLD_SIZE not set)")
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             return self
 
@@ -126,7 +129,7 @@ class DDPManager:
         self.local_rank = int(os.environ.get("LOCAL_RANK", 0))
 
         if self.world_size <= 1:
-            print("[DDP] Running in single-GPU mode (WORLD_SIZE=1)")
+            logger.info("[DDP] Running in single-GPU mode (WORLD_SIZE=1)")
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             return self
 
@@ -141,9 +144,9 @@ class DDPManager:
         # Initialize process group
         timeout = timedelta(minutes=timeout_minutes)
 
-        print(f"[DDP] Initializing rank {self.rank}/{self.world_size} "
+        logger.info(f"[DDP] Initializing rank {self.rank}/{self.world_size} "
               f"(local_rank={self.local_rank}) on {socket.gethostname()}")
-        print(f"[DDP] MASTER_ADDR={os.environ.get('MASTER_ADDR')}, "
+        logger.info(f"[DDP] MASTER_ADDR={os.environ.get('MASTER_ADDR')}, "
               f"MASTER_PORT={os.environ.get('MASTER_PORT')}")
 
         dist.init_process_group(
@@ -161,7 +164,7 @@ class DDPManager:
         dist.barrier()
 
         if self.is_main:
-            print(f"[DDP] Initialized {self.world_size} processes")
+            logger.info(f"[DDP] Initialized {self.world_size} processes")
 
         return self
 
@@ -235,7 +238,7 @@ class DDPManager:
                     replacement=True,  # Required for weighted sampling
                     seed=42,
                 )
-                print(f"[DDP R{self.rank}] Using DistributedWeightedSampler for class-balanced training")
+                logger.info(f"[DDP R{self.rank}] Using DistributedWeightedSampler for class-balanced training")
             else:
                 # Single GPU: use standard WeightedRandomSampler
                 self.sampler = WeightedRandomSampler(
@@ -243,7 +246,7 @@ class DDPManager:
                     num_samples=len(dataset),
                     replacement=True,
                 )
-                print("[DDP] Using WeightedRandomSampler for class-balanced training")
+                logger.info("[DDP] Using WeightedRandomSampler for class-balanced training")
             shuffle = False  # Sampler handles sampling
         elif self.is_distributed:
             self.sampler = DistributedSampler(

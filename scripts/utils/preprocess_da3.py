@@ -8,6 +8,7 @@ Usage:
 """
 
 import argparse
+import logging
 import os
 import sys
 from pathlib import Path
@@ -15,6 +16,8 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 import torchvision.transforms as T
+
+logger = logging.getLogger(__name__)
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -39,7 +42,7 @@ def load_scene_list(data_root: Path, split: str) -> list:
                 break
 
     if not split_file.exists():
-        print(f"Warning: Split file not found: {split_file}")
+        logger.warning(f"Split file not found: {split_file}")
         return []
 
     with open(split_file) as f:
@@ -83,23 +86,23 @@ def main():
     is_main = (local_rank == 0)
 
     if is_main:
-        print(f"Preprocessing DA3 depth for ScanNet++")
-        print(f"  Data root: {args.data_root}")
-        print(f"  Split: {args.split}")
-        print(f"  DA3 model: {args.da3_model}")
-        print(f"  DA3 resolution: {args.da3_resolution} -> SAM3 resolution: {args.sam3_resolution}")
-        print(f"  World size: {world_size}")
+        logger.info(f"Preprocessing DA3 depth for ScanNet++")
+        logger.info(f"  Data root: {args.data_root}")
+        logger.info(f"  Split: {args.split}")
+        logger.info(f"  DA3 model: {args.da3_model}")
+        logger.info(f"  DA3 resolution: {args.da3_resolution} -> SAM3 resolution: {args.sam3_resolution}")
+        logger.info(f"  World size: {world_size}")
 
     # Load DA3 model
     if is_main:
-        print(f"\n[Rank {local_rank}] Loading DA3 model...")
+        logger.info(f"[Rank {local_rank}] Loading DA3 model...")
 
     from depth_anything_3.api import DepthAnything3
     da3 = DepthAnything3.from_pretrained(args.da3_model).to(device)
     da3.eval()
 
     if is_main:
-        print(f"  DA3 loaded successfully")
+        logger.info(f"  DA3 loaded successfully")
 
     # Get scene list
     data_root = Path(args.data_root)
@@ -122,7 +125,7 @@ def main():
         scenes = scenes[:args.max_scenes]
 
     if is_main:
-        print(f"\nFound {len(scenes)} scenes with images (from {split_count} in split file)")
+        logger.info(f"Found {len(scenes)} scenes with images (from {split_count} in split file)")
 
     # Create cache directory
     cache_dir = data_root / "da3_cache"
@@ -154,13 +157,13 @@ def main():
             })
 
     if is_main:
-        print(f"Images to process: {len(all_images)}")
+        logger.info(f"Images to process: {len(all_images)}")
 
     # Distribute work across GPUs (round-robin)
     my_images = all_images[local_rank::world_size]
 
     # Show work distribution across all ranks
-    print(f"[Rank {local_rank}] Processing {len(my_images)} images on GPU {local_rank}")
+    logger.info(f"[Rank {local_rank}] Processing {len(my_images)} images on GPU {local_rank}")
 
     # Process images in batches for better GPU utilization
     from PIL import Image
@@ -252,7 +255,7 @@ def main():
                     torch.save(cache_data, meta['cache_path'])
 
         except Exception as e:
-            print(f"\n[Rank {local_rank}] Error processing batch: {e}")
+            logger.warning(f"[Rank {local_rank}] Error processing batch: {e}")
             import traceback
             traceback.print_exc()
             continue
@@ -269,4 +272,5 @@ def main():
         print(f"  Training will use cached depth directly (no upsampling needed)")
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
     main()

@@ -49,6 +49,12 @@ class DA3Config:
     da3_chunk_size: int = 8
     # DA3-NESTED chunk size for chunk_aware sampling
 
+    use_cached_pi3x: bool = False
+    # Use pre-computed world-frame pointmaps from MapAnything/PI3X (bypasses DA3 for pointmaps)
+
+    pi3x_cache_name: str = 'ma_cache_train'
+    # PI3X cache directory name under data root
+
 
 @dataclass
 class ModelConfig:
@@ -589,7 +595,7 @@ class TrainConfig:
                 if f.name in flat:
                     raise ValueError(
                         f"Duplicate field name '{f.name}' found in group "
-                        f"'{group_field.name}' — all field names must be unique across groups."
+                        f"'{group_field.name}': all field names must be unique across groups."
                     )
                 flat[f.name] = value
         return argparse.Namespace(**flat)

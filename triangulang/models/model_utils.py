@@ -300,7 +300,7 @@ def select_mask_by_confidence(self, mask_preds, logits=None, presence_logit=None
     # Weight by presence (SAM3-style: score × presence)
     if presence_logit is not None:
         presence_weight = torch.sigmoid(presence_logit)  # [B, 1]
-        scores = scores * presence_weight  # [B, Q] * [B, 1] → broadcast
+        scores = scores * presence_weight  # [B, Q] * [B, 1] -> broadcast
     best_idx = scores.argmax(dim=1)  # [B]
     batch_idx = torch.arange(B, device=mask_preds.device)
     return mask_preds[batch_idx, best_idx].unsqueeze(1), best_idx
@@ -655,7 +655,8 @@ def forward_multiview(self, images, text_prompts, gt_masks=None,
                       intrinsics_orig_hw=None, cached_depth=None,
                       point_prompts=None, point_labels=None,
                       box_prompts=None, box_labels=None,
-                      da3_extrinsics=None, da3_intrinsics=None):
+                      da3_extrinsics=None, da3_intrinsics=None,
+                      cached_pi3x_pointmaps=None):
     """Multi-view forward with cross-view attention.
 
     Unlike forward() which processes views independently, this method:
@@ -699,7 +700,7 @@ def forward_multiview(self, images, text_prompts, gt_masks=None,
     # 1. Get depth for all views
     da3_live_extrinsics = None  # Will be set if DA3 runs multi-view live
     if self.da3 is None:
-        # No DA3 model loaded (no GASA, no PE, no centroid) — skip depth entirely
+        # No DA3 model loaded (no GASA, no PE, no centroid): skip depth entirely
         depth = None
     elif cached_depth is not None:
         # cached_depth: [B, N, 1, H, W] -> [B*N, 1, H, W]
@@ -708,7 +709,7 @@ def forward_multiview(self, images, text_prompts, gt_masks=None,
             depth = F.interpolate(depth, size=(self.resolution, self.resolution),
                                   mode='bilinear', align_corners=False)
     else:
-        # Run DA3 live — pass all N views together so DA3-NESTED can estimate
+        # Run DA3 live: pass all N views together so DA3-NESTED can estimate
         # multi-view consistent depth + poses (instead of per-frame identity poses)
         patch_size = 14
         da3_res = (self.da3_resolution // patch_size) * patch_size
@@ -722,7 +723,7 @@ def forward_multiview(self, images, text_prompts, gt_masks=None,
                 export_feat_layers=[], infer_gs=False
             )
         depth = da3_output.depth
-        # DA3-NESTED returns depth as [B, N, H, W] — reshape to [B*N, H, W]
+        # DA3-NESTED returns depth as [B, N, H, W]: reshape to [B*N, H, W]
         if depth.dim() == 4 and depth.shape[0] == B and depth.shape[1] == N:
             depth = depth.view(B * N, depth.shape[-2], depth.shape[-1])
         elif depth.dim() == 4 and depth.shape[1] == 1:
@@ -744,18 +745,18 @@ def forward_multiview(self, images, text_prompts, gt_masks=None,
                 da3_ext = torch.from_numpy(da3_ext)
             # Inverse requires float32 (not float16 from autocast)
             da3_ext = da3_ext.to(device=device, dtype=torch.float32)
-            # DA3-NESTED returns [B, N, 3, 4] — pad to [B, N, 4, 4]
+            # DA3-NESTED returns [B, N, 3, 4]: pad to [B, N, 4, 4]
             if da3_ext.shape[-2] == 3 and da3_ext.shape[-1] == 4:
                 pad = torch.tensor([0, 0, 0, 1], device=device, dtype=torch.float32)
                 pad = pad.view(1, 1, 1, 4).expand(*da3_ext.shape[:-2], 1, 4)
                 da3_ext = torch.cat([da3_ext, pad], dim=-2)  # [B, N, 4, 4]
             da3_ext = da3_ext.view(B * N, 4, 4)
-            # DA3-NESTED outputs w2c — invert to c2w for pointmap computation
+            # DA3-NESTED outputs w2c: invert to c2w for pointmap computation
             da3_live_extrinsics = torch.inverse(da3_ext).to(dtype=depth.dtype)
 
     # 2. Setup intrinsics and compute pointmaps
     if depth is None:
-        # No depth available (no DA3 model loaded) — skip pointmap computation
+        # No depth available (no DA3 model loaded): skip pointmap computation
         pointmaps_small = torch.zeros(B * N, self.attn_map_size, self.attn_map_size, 3, device=device)
         pointmaps_full = torch.zeros(B * N, self.resolution, self.resolution, 3, device=device)
         norm_params = None
@@ -795,27 +796,54 @@ def forward_multiview(self, images, text_prompts, gt_masks=None,
             intrinsics_scaled = intrinsics.clone()
 
         # 3. Compute pointmaps for cross-view attention
-        # Priority: da3_extrinsics (cached/passed) > da3_live_extrinsics (from live DA3 run) > gt_extrinsics > identity
-        if self.use_da3_poses_for_gasa and da3_extrinsics is not None:
-            world_pose = da3_extrinsics.view(B * N, 4, 4).to(device=device, dtype=depth.dtype)
-        elif self.use_da3_poses_for_gasa and da3_live_extrinsics is not None:
-            # DA3 ran live on all N views and estimated poses — use them
-            world_pose = da3_live_extrinsics.to(dtype=depth.dtype)
-        elif gt_extrinsics is not None:
-            world_pose = gt_extrinsics.view(B * N, 4, 4).to(device=device, dtype=depth.dtype)
-        else:
-            # Use identity poses (camera-frame) - consistent with training when poses not specified
-            world_pose = torch.eye(4, device=device, dtype=depth.dtype).unsqueeze(0).expand(B * N, -1, -1).contiguous()
-        # PointmapComputer expects [B*N, 1, H, W] or [B, N, H, W] — ensure 4D
-        depth_4d = depth.unsqueeze(1) if depth.dim() == 3 else depth
-        pointmaps, norm_params = self.pointmap_computer(depth_4d, world_pose, intrinsics_scaled, normalize=self.pointmap_normalize)
-        pointmaps = pointmaps.squeeze(1)  # [B*N, H, W, 3]
-        pointmaps_full = pointmaps  # Save full-resolution pointmaps for centroid computation
+        # Priority: pi3x (cached world-frame) > da3_extrinsics > da3_live > gt_extrinsics > identity
+        if cached_pi3x_pointmaps is not None:
+            # PI3X path: pre-computed world-frame pointmaps bypass PointmapComputer
+            _pi3x = cached_pi3x_pointmaps.view(B * N, *cached_pi3x_pointmaps.shape[2:]).to(
+                device=device, dtype=sam3_images.dtype)
+            if _pi3x.shape[1:3] != (self.resolution, self.resolution):
+                pts = _pi3x.permute(0, 3, 1, 2)
+                pts = F.interpolate(pts, size=(self.resolution, self.resolution),
+                                    mode='bilinear', align_corners=False)
+                _pi3x = pts.permute(0, 2, 3, 1)
+            if self.pointmap_normalize:
+                valid = _pi3x.abs().sum(-1) > 0
+                pts_flat = _pi3x.view(B * N, -1, 3)
+                valid_flat = valid.view(B * N, -1)
+                valid_counts = valid_flat.sum(dim=1, keepdim=True).clamp(min=1)
+                center = (pts_flat * valid_flat.unsqueeze(-1)).sum(dim=1, keepdim=True) / valid_counts.unsqueeze(-1)
+                pts_centered = pts_flat - center
+                scale = (pts_centered.abs() * valid_flat.unsqueeze(-1)).sum(dim=1, keepdim=True) / valid_counts.unsqueeze(-1) / 3.0
+                scale = scale.clamp(min=1e-6)
+                pointmaps = (pts_centered / scale).view(B * N, *_pi3x.shape[1:3], 3)
+                norm_params = {'center': center, 'scale': scale}
+            else:
+                pointmaps = _pi3x
+                norm_params = None
+            pointmaps_full = pointmaps
+            pts = pointmaps.permute(0, 3, 1, 2)
+            pts = F.adaptive_avg_pool2d(pts, (self.attn_map_size, self.attn_map_size))
+            pointmaps_small = pts.permute(0, 2, 3, 1)
 
-        # Downsample pointmaps for decoder
-        pts = pointmaps.permute(0, 3, 1, 2)
-        pts = F.adaptive_avg_pool2d(pts, (self.attn_map_size, self.attn_map_size))
-        pointmaps_small = pts.permute(0, 2, 3, 1)  # [B*N, H', W', 3]
+        else:
+            # Standard PointmapComputer path (no PI3X cache)
+            if self.use_da3_poses_for_gasa and da3_extrinsics is not None:
+                world_pose = da3_extrinsics.view(B * N, 4, 4).to(device=device, dtype=depth.dtype)
+            elif self.use_da3_poses_for_gasa and da3_live_extrinsics is not None:
+                world_pose = da3_live_extrinsics.to(dtype=depth.dtype)
+            elif gt_extrinsics is not None:
+                world_pose = gt_extrinsics.view(B * N, 4, 4).to(device=device, dtype=depth.dtype)
+            else:
+                world_pose = torch.eye(4, device=device, dtype=depth.dtype).unsqueeze(0).expand(B * N, -1, -1).contiguous()
+            depth_4d = depth.unsqueeze(1) if depth.dim() == 3 else depth
+            pointmaps, norm_params = self.pointmap_computer(depth_4d, world_pose, intrinsics_scaled, normalize=self.pointmap_normalize)
+            pointmaps = pointmaps.squeeze(1)  # [B*N, H, W, 3]
+            pointmaps_full = pointmaps
+
+            # Downsample pointmaps for decoder
+            pts = pointmaps.permute(0, 3, 1, 2)
+            pts = F.adaptive_avg_pool2d(pts, (self.attn_map_size, self.attn_map_size))
+            pointmaps_small = pts.permute(0, 2, 3, 1)  # [B*N, H', W', 3]
 
     # 4. Run SAM3 backbone and encoder for all views
     with torch.no_grad():

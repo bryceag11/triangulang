@@ -20,7 +20,7 @@ import random
 # Reverse synonyms: Map SPECIFIC labels to their GENERAL form
 # This helps when dataset has very specific labels like "pedestal fan" but model knows "fan" better
 REVERSE_SYNONYMS = {
-    # Fan variants → fan
+    # Fan variants -> fan
     'pedestal fan': 'fan',
     'desk fan': 'fan',
     'portable fan': 'fan',
@@ -28,14 +28,14 @@ REVERSE_SYNONYMS = {
     'ceiling fan': 'fan',
     'exhaust fan': 'fan',
 
-    # Chair variants → chair
+    # Chair variants -> chair
     'office chair': 'chair',
     'dining chair': 'chair',
     'lounge chair': 'chair',
     'desk chair': 'chair',
     'high stool': 'stool',
 
-    # Table variants → table
+    # Table variants -> table
     'office table': 'table',
     'office desk': 'desk',
     'coffee table': 'table',
@@ -564,14 +564,14 @@ class PromptAugmentor:
 
         result = category.lower().strip()
 
-        # First: Maybe simplify specific label to general form (e.g., "pedestal fan" → "fan")
+        # First: Maybe simplify specific label to general form (e.g., "pedestal fan" -> "fan")
         # This helps when CLIP/SAM3 knows the general concept better than the specific variant
         if use_reverse_synonym and random.random() < reverse_synonym_prob:
             general_form = REVERSE_SYNONYMS.get(result)
             if general_form:
                 result = general_form
 
-        # Then: Maybe replace with forward synonym (e.g., "fan" → "ventilator")
+        # Then: Maybe replace with forward synonym (e.g., "fan" -> "ventilator")
         if use_synonym and random.random() < self.synonym_prob:
             synonyms = CATEGORY_SYNONYMS.get(result, [])
             if synonyms:

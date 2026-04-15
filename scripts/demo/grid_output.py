@@ -9,10 +9,13 @@ Usage:
 """
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -201,7 +204,7 @@ def create_paper_figure(
     plt.savefig(output_path, dpi=dpi, bbox_inches='tight',
                 facecolor='white', edgecolor='none')
     plt.close(fig)
-    print(f"Saved publication figure to {output_path} ({dpi} DPI)")
+    logger.info(f"Saved publication figure to {output_path} ({dpi} DPI)")
 
 def _score_color(score: float) -> tuple:
     """Map 0-1 score to red-yellow-green color."""
@@ -338,4 +341,5 @@ def main():
     )
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
     main()

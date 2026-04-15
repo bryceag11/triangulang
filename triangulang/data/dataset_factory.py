@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import Dict, Tuple, Optional
 from torch.utils.data import Dataset
 
+import triangulang
+logger = triangulang.get_logger(__name__)
+
 
 SUPPORTED_DATASETS = ['scannetpp', 'nvos', 'spinnerf', 'uco3d', 'lerf_ovs']
 
@@ -62,6 +65,8 @@ def get_dataset(
             min_category_samples=kwargs.get('min_category_samples', 1),
             exclude_categories=kwargs.get('exclude_categories', None),
             num_objects_per_sample=kwargs.get('num_objects_per_sample', 1),
+            use_cached_pi3x=kwargs.get('use_cached_pi3x', False),
+            pi3x_cache_name=kwargs.get('pi3x_cache_name', 'ma_cache_train'),
         )
 
     elif dataset_name == 'nvos':
@@ -185,15 +190,14 @@ def get_dataset_config(dataset_name: str) -> Dict:
 
 def print_dataset_info():
     """Print information about all supported datasets."""
-    print("\nSupported Datasets\n")
+    logger.info("Supported Datasets")
     for name in SUPPORTED_DATASETS:
         config = get_dataset_config(name)
-        print(f"  {name}:")
-        print(f"    Description: {config.get('description', 'N/A')}")
-        print(f"    Default root: {config.get('data_root', 'N/A')}")
-        print(f"    Has poses: {config.get('has_poses', False)}")
-        print(f"    Has metric scale: {config.get('has_metric_scale', False)}")
-        print()
+        logger.info(f"  {name}:")
+        logger.info(f"    Description: {config.get('description', 'N/A')}")
+        logger.info(f"    Default root: {config.get('data_root', 'N/A')}")
+        logger.info(f"    Has poses: {config.get('has_poses', False)}")
+        logger.info(f"    Has metric scale: {config.get('has_metric_scale', False)}")
 
 
 def collate_fn_universal(batch):

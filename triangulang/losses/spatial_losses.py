@@ -145,7 +145,7 @@ def spatial_selection_loss(pred_masks, gt_masks, depth, labels, spatial_indices)
     total_loss = torch.tensor(0.0, device=device)
     n_spatial = 0
 
-    # Compute GT mask centroids and depths (detached — these are targets)
+    # Compute GT mask centroids and depths (detached, these are targets)
     with torch.no_grad():
         gt_binary = (gt_masks > 0.5).float()
         y_coords = torch.arange(H, device=device, dtype=torch.float32).view(H, 1).expand(H, W)

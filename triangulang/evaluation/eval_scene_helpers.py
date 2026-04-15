@@ -100,7 +100,7 @@ def _prepare_spatial_queries(
                               f"(idx {selected_idx}/{len(candidate_masks)})")
                         continue
 
-            # Fallback: filtering failed -- keep all
+            # Fallback: filtering failed, keep all
             filtered.extend(obj_list)
         else:
             filtered.extend(obj_list)
@@ -121,8 +121,8 @@ def _prepare_multi_instance_eval(
     """Build auto-generated spatial items for multi-instance labels.
 
     For each label that appears at least twice in *valid_objects* we generate
-    up to four items -- one per spatial qualifier in
-    ['nearest', 'farthest', 'leftmost', 'rightmost'] -- each paired with
+    up to four items, one per spatial qualifier in
+    ['nearest', 'farthest', 'leftmost', 'rightmost'], each paired with
     the ground-truth object id that satisfies that qualifier.
 
     Returns a list of (label, [obj_id], spatial_prompt) triples (may be
@@ -221,14 +221,14 @@ def _evaluate_single_object(
     """Run the model on every frame for a single (label, obj_ids) item.
 
     Returns a dict with keys:
-      metrics_list       -- list of per-frame metric dicts
-      category_label     -- string used for per-category aggregation
-      viz_entries        -- list of dicts for the visualisation grid
-      consistency_entry  -- float or None (cross-view consistency)
-      raw_centroids      -- dict {obj_id: [world_cent, ...]}
-      preprocess_times   -- list of floats (seconds)
-      inference_times    -- list of floats (seconds)
-      localization_entries -- list of localization dicts
+      metrics_list       : list of per-frame metric dicts
+      category_label     : string used for per-category aggregation
+      viz_entries        : list of dicts for the visualisation grid
+      consistency_entry  : float or None (cross-view consistency)
+      raw_centroids      : dict {obj_id: [world_cent, ...]}
+      preprocess_times   : list of floats (seconds)
+      inference_times    : list of floats (seconds)
+      localization_entries : list of localization dicts
     """
     category_label = spatial_prompt_override if spatial_prompt_override else label
 

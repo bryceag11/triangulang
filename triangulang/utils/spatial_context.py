@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from typing import Tuple, Optional, List, Dict, Any
 import numpy as np
 import torch
+
+import triangulang
+logger = triangulang.get_logger(__name__)
 from triangulang.utils.spatial_reasoning import (
     SPATIAL_QUALIFIERS, SPATIAL_QUALIFIER_TO_IDX, RELATION_PATTERNS,
     parse_spatial_qualifier, parse_relational_query, get_spatial_qualifier_idx,
@@ -541,10 +544,10 @@ if __name__ == '__main__':
         "chair",  # No qualifier
     ]
 
-    print("Spatial Qualifier Parsing")
+    logger.debug("Spatial Qualifier Parsing")
     for prompt in test_prompts:
         qualifier, base = parse_spatial_qualifier(prompt)
-        print(f"  '{prompt}' -> qualifier={qualifier}, base='{base}'")
+        logger.debug(f"  '{prompt}' -> qualifier={qualifier}, base='{base}'")
 
     # Test relational query parsing
     test_relational = [
@@ -555,18 +558,18 @@ if __name__ == '__main__':
         "cat behind the couch",
     ]
 
-    print("\nRelational Query Parsing")
+    logger.debug("Relational Query Parsing")
     for prompt in test_relational:
         target, ref, relation = parse_relational_query(prompt)
-        print(f"  '{prompt}' -> target='{target}', ref='{ref}', relation='{relation}'")
+        logger.debug(f"  '{prompt}' -> target='{target}', ref='{ref}', relation='{relation}'")
 
     # Test pseudo-point conversion
-    print("\nSpatial to Pseudo-Point")
+    logger.debug("Spatial to Pseudo-Point")
     for qualifier_type in ['depth_min', 'x_min', 'x_max', 'y_min', 'y_max']:
         points, labels = spatial_to_pseudo_point(qualifier_type, None, 518, 518)
-        print(f"  {qualifier_type} -> points={points}, labels={labels}")
+        logger.debug(f"  {qualifier_type} -> points={points}, labels={labels}")
 
-    print("\nSpatial Augmentation")
+    logger.debug("Spatial Augmentation")
     # Create dummy data
     mask1 = np.zeros((128, 128))
     mask1[20:40, 20:40] = 1  # Top-left
@@ -578,5 +581,5 @@ if __name__ == '__main__':
     for _ in range(5):
         aug1 = augmentor("chair", mask1, depth, [mask1, mask2])
         aug2 = augmentor("chair", mask2, depth, [mask1, mask2])
-        print(f"  mask1 (top-left): '{aug1}'")
-        print(f"  mask2 (bottom-right): '{aug2}'")
+        logger.debug(f"  mask1 (top-left): '{aug1}'")
+        logger.debug(f"  mask2 (bottom-right): '{aug2}'")

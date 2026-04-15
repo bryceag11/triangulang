@@ -197,13 +197,13 @@ def create_multi_object_viz(
             legend_entries.append((obj['label'], obj['iou'], color))
 
         axes[row, 0].imshow(gt_overlay.astype(np.uint8))
-        axes[row, 0].set_title(f'GT — {frame_name}', fontsize=11, fontweight='bold')
+        axes[row, 0].set_title(f'GT: {frame_name}', fontsize=11, fontweight='bold')
         axes[row, 0].axis('off')
 
         axes[row, 1].imshow(pred_overlay.astype(np.uint8))
         # Build label string with per-object IoU
         iou_str = ', '.join(f'{l}: {iou*100:.0f}%' for l, iou, _ in legend_entries)
-        axes[row, 1].set_title(f'Pred — {iou_str}', fontsize=9)
+        axes[row, 1].set_title(f'Pred: {iou_str}', fontsize=9)
         axes[row, 1].axis('off')
 
         # Add colored legend patches

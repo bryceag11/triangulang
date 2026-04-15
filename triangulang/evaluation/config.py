@@ -43,7 +43,7 @@ class ModelConfig:
 class DataConfig:
     """Dataset and data loading options."""
 
-    dataset: Literal["scannetpp", "nvos", "spinnerf", "uco3d", "partimagenet", "lerf_ovs", "lerf_loc"] = "scannetpp"
+    dataset: Literal["scannetpp", "nvos", "spinnerf", "uco3d", "partimagenet", "lerf_ovs"] = "scannetpp"
 
     data_root: Optional[str] = None
     split: str = "nvs_sem_val_v2"
@@ -107,6 +107,12 @@ class InferenceConfig:
 
     use_crf: bool = False
     # CRF post-processing for sharper mask boundaries
+
+    use_cached_pi3x: bool = False
+    # Use pre-computed world-frame pointmaps from MapAnything/PI3X (bypasses DA3 for pointmaps)
+
+    pi3x_cache_name: str = 'ma_cache_val'
+    # PI3X cache directory name under data root
 
 
 @dataclass
@@ -245,7 +251,14 @@ class LERFConfig:
     langsplat_thresh: float = 0.4
 
     no_loc_smoothing: bool = False
-    # Disable 29x29 avg-pool smoothing before localization argmax
+    # Disable avg-pool smoothing before localization argmax
+
+    loc_kernel_size: int = 15
+    # Avg-pool kernel size for localization smoothing (LangSplat uses 29)
+
+    spatial_instance_prompts: bool = False
+    # For multi-instance categories (e.g. knives), auto-prepend spatial qualifiers
+    # (leftmost/rightmost/middle) based on GT polygon position
 
 
 @dataclass

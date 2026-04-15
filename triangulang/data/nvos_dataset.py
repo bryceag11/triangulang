@@ -14,6 +14,9 @@ from torch.utils.data import Dataset
 import numpy as np
 from PIL import Image
 
+import triangulang
+logger = triangulang.get_logger(__name__)
+
 
 # Scenes used by MV-SAM (orchid excluded)
 NVOS_SCENES = ['fern', 'flower', 'fortress', 'horns_center', 'horns_left', 'leaves', 'trex']
@@ -196,7 +199,7 @@ class NVOSDataset(Dataset):
         # Load scene data
         self._load_scenes()
 
-        print(f"NVOS Dataset: {len(self.scenes)} scenes, {len(self)} samples")
+        logger.info(f"NVOS Dataset: {len(self.scenes)} scenes, {len(self)} samples")
 
     def _load_scenes(self):
         """Load metadata for each scene using llff directory structure."""
@@ -207,7 +210,7 @@ class NVOSDataset(Dataset):
             scene_ids = NVOS_IMAGE_IDS.get(scene_name)
 
             if not scene_ids:
-                print(f"Warning: No image IDs for scene {scene_name}")
+                logger.warning(f"No image IDs for scene {scene_name}")
                 continue
 
             # Find reference image (with scribbles)
@@ -241,9 +244,9 @@ class NVOSDataset(Dataset):
 
             # Debug: print what we found
             if scene['reference_image'] and scene['target_image'] and scene['target_mask']:
-                print(f"✓ {scene_name}: ref={scene['reference_image'].name}, target={scene['target_image'].name}")
+                logger.debug(f"{scene_name}: ref={scene['reference_image'].name}, target={scene['target_image'].name}")
             else:
-                print(f"✗ {scene_name}: Missing files (ref={scene['reference_image']}, target={scene['target_image']}, mask={scene['target_mask']})")
+                logger.warning(f"{scene_name}: Missing files (ref={scene['reference_image']}, target={scene['target_image']}, mask={scene['target_mask']})")
 
     def __len__(self):
         return len(self.scenes) * self.samples_per_scene

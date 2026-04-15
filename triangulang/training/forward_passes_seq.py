@@ -1,5 +1,8 @@
 """Forward pass helpers for TrianguLang training loop."""
+import triangulang
 import torch
+
+logger = triangulang.get_logger(__name__)
 import torch.nn.functional as F
 from torch.amp import autocast
 from triangulang.losses.segmentation import (
@@ -45,7 +48,7 @@ def _compute_sheaf_loss(sheaf_loss_fn, feature_sheaf_loss_fn, sheaf_preds, sheaf
                     import traceback
                     traceback.print_exc()
                 if sheaf_loss_fn._failure_count == 10:
-                    print(f"  [SHEAF ERROR] 10 consecutive failures — sheaf loss may not be working. "
+                    print(f"  [SHEAF ERROR] 10 consecutive failures. Sheaf loss may not be working. "
                           f"Check world_pointmaps and correspondence quality.")
 
     if feature_sheaf_loss_fn is not None and len(sheaf_embeddings) >= 2 and len(sheaf_pointmaps) >= 2:
@@ -145,7 +148,7 @@ def _forward_sequential(model, base_model, images, gt_masks, prompts, batch, arg
         seq_multi_prompts = batch.get('multi_object_prompts', None)  # [B][K]
 
         # Apply spatial augmentation to multi-object prompts
-        # Each object gets independently augmented (e.g., "chair" → "nearest chair")
+        # Each object gets independently augmented (e.g., "chair" -> "nearest chair")
         # Only applies to multi-instance objects (same label appears 2+ times)
         if seq_multi_prompts is not None and gt_aware_spatial is not None:
             spatial_contexts_raw = batch.get('spatial_context', None)
@@ -233,7 +236,7 @@ def _forward_sequential(model, base_model, images, gt_masks, prompts, batch, arg
                     # Use simple per-object single-object loss (no matching needed).
                     if outputs.get('sam3_mo_K') is not None:
                         sam3_K = outputs['sam3_mo_K']
-                        # GT: [B, K, H, W] → [B*K, H, W]
+                        # GT: [B, K, H, W] -> [B*K, H, W]
                         per_obj_gt = view_gt_all.reshape(-1, *view_gt_all.shape[2:]).float()  # [B*K, H, W]
                         per_obj_valid = (per_obj_gt.sum(dim=(-2, -1)) > 0)
 
@@ -575,7 +578,7 @@ def _forward_sequential(model, base_model, images, gt_masks, prompts, batch, arg
                             contrast_loss = contrastive_mask_loss(scores, best_idx, margin=args.contrastive_margin)
                             loss = loss + args.contrastive_weight * contrast_loss
 
-                    # Text scoring loss: REMOVED — pred_logits now comes from DotProductScoring head,
+                    # Text scoring loss: REMOVED. pred_logits now comes from DotProductScoring head,
                     # so the existing align loss trains text-query matching end-to-end (SAM3-style).
 
                     # Align loss: IoU-aware focal loss on pred_logits (SAM3/AlignDETR style)
@@ -600,11 +603,11 @@ def _forward_sequential(model, base_model, images, gt_masks, prompts, batch, arg
                             sheaf_pointmaps.append(outputs['world_pointmaps'].detach())  # [B, H, W, 3] world-frame
                             # Debug: check if world pointmaps are being used
                             if batch_idx == 0 and v == 0 and epoch == start_epoch:
-                                ddp.print(f"  [Sheaf] Using WORLD pointmaps for view {v}")
+                                logger.debug(f"  [Sheaf] Using WORLD pointmaps for view {v}")
                         elif 'pointmaps' in outputs:
                             sheaf_pointmaps.append(outputs['pointmaps'].detach())  # [B, H, W, 3] camera-frame fallback
                             if batch_idx == 0 and v == 0 and epoch == start_epoch:
-                                ddp.print(f"  [Sheaf] WARNING: Using CAMERA-FRAME pointmaps for view {v} (world_pointmaps not in outputs)")
+                                logger.warning(f"  [Sheaf] Using CAMERA-FRAME pointmaps for view {v} (world_pointmaps not in outputs)")
 
                         # Collect embeddings for feature sheaf loss
                         if feature_sheaf_loss_fn is not None:
@@ -660,7 +663,7 @@ def _forward_sequential(model, base_model, images, gt_masks, prompts, batch, arg
                                          'outputs': {k: v.detach().cpu() if isinstance(v, torch.Tensor) else v for k, v in outputs.items()},
                                          'prompts': prompts}
             except Exception as e:
-                ddp.print(f"Error: {e}")
+                logger.warning(f"Error: {e}")
                 import traceback
                 traceback.print_exc()
 

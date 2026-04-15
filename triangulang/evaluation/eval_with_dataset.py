@@ -11,6 +11,9 @@ from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 from tqdm import tqdm
 from PIL import Image
+import triangulang
+
+logger = triangulang.get_logger(__name__)
 
 from triangulang.models.triangulang_model import TrianguLangModel
 from triangulang.utils.prompt_augmentor import PromptAugmentor
@@ -514,7 +517,7 @@ def evaluate_with_dataset(
 
         except Exception as e:
             if ddp.is_main:
-                print(f"Error processing batch {batch_idx}: {e}")
+                logger.warning(f"Error processing batch {batch_idx}: {e}")
             continue
 
     # Gather results across ranks
@@ -618,42 +621,43 @@ def evaluate_with_dataset(
         results['num_centroid_samples'] = len(centroid_errors)
 
     if ddp.is_main:
-        ddp.print("\n" + "="*70)
-        ddp.print("EVALUATION RESULTS (uCO3D)")
-        ddp.print("="*70)
-        ddp.print(f"Samples evaluated: {results['num_samples']}")
-        ddp.print(f"Categories: {results['num_categories']}")
-        ddp.print("-"*70)
-        ddp.print(f"{'Metric':<25} {'Selected':<15} {'Oracle':<15} {'Gap':<10}")
-        ddp.print("-"*70)
-        ddp.print(f"{'Sample-avg IoU:':<25} {100*mean_iou:>13.2f}%  {100*mean_oracle_iou:>13.2f}%  {100*(mean_oracle_iou-mean_iou):>+8.2f}%")
-        ddp.print(f"{'Global mIoU:':<25} {100*global_miou:>13.2f}%  {100*global_oracle_miou:>13.2f}%  {100*(global_oracle_miou-global_miou):>+8.2f}%")
-        ddp.print("-"*70)
-        ddp.print(f"Mean Class Recall:{100*global_mrecall:.2f}%  (sample-avg: {100*mean_recall:.2f}%)")
-        ddp.print(f"Precision:        {100*mean_precision:.2f}%")
-        ddp.print(f"F1 Score:         {100*mean_f1:.2f}%")
-        ddp.print("-"*70)
+        print()
+        print("="*70)
+        print("EVALUATION RESULTS (uCO3D)")
+        print("="*70)
+        print(f"Samples evaluated: {results['num_samples']}")
+        print(f"Categories: {results['num_categories']}")
+        print("-"*70)
+        print(f"{'Metric':<25} {'Selected':<15} {'Oracle':<15} {'Gap':<10}")
+        print("-"*70)
+        print(f"{'Sample-avg IoU:':<25} {100*mean_iou:>13.2f}%  {100*mean_oracle_iou:>13.2f}%  {100*(mean_oracle_iou-mean_iou):>+8.2f}%")
+        print(f"{'Global mIoU:':<25} {100*global_miou:>13.2f}%  {100*global_oracle_miou:>13.2f}%  {100*(global_oracle_miou-global_miou):>+8.2f}%")
+        print("-"*70)
+        print(f"Mean Class Recall:{100*global_mrecall:.2f}%  (sample-avg: {100*mean_recall:.2f}%)")
+        print(f"Precision:        {100*mean_precision:.2f}%")
+        print(f"F1 Score:         {100*mean_f1:.2f}%")
+        print("-"*70)
 
         if acc_5cm is not None:
-            ddp.print(f"3D Localization (IoU-based, same pointmap):")
-            ddp.print(f"  Acc@5cm:        {100*acc_5cm:.2f}%")
-            ddp.print(f"  Acc@10cm:       {100*acc_10cm:.2f}%")
-            ddp.print(f"  Acc@50cm:       {100*acc_50cm:.2f}%")
+            print(f"3D Localization (IoU-based, same pointmap):")
+            print(f"  Acc@5cm:        {100*acc_5cm:.2f}%")
+            print(f"  Acc@10cm:       {100*acc_10cm:.2f}%")
+            print(f"  Acc@50cm:       {100*acc_50cm:.2f}%")
             if mean_centroid_error is not None:
-                ddp.print(f"  Mean Error:     {mean_centroid_error*100:.1f} cm")
-            ddp.print(f"  Samples:        {len(centroid_errors)}")
-            ddp.print("-"*60)
+                print(f"  Mean Error:     {mean_centroid_error*100:.1f} cm")
+            print(f"  Samples:        {len(centroid_errors)}")
+            print("-"*60)
 
         # Top/bottom categories
         sorted_cats = sorted(category_miou.items(), key=lambda x: x[1], reverse=True)
-        ddp.print(f"\nTop 5 categories:")
+        print(f"Top 5 categories:")
         for cat, iou in sorted_cats[:5]:
             recall = category_mrecall.get(cat, 0)
-            ddp.print(f"  {cat}: IoU={100*iou:.1f}%, Recall={100*recall:.1f}%")
-        ddp.print(f"\nBottom 5 categories:")
+            print(f"  {cat}: IoU={100*iou:.1f}%, Recall={100*recall:.1f}%")
+        print(f"Bottom 5 categories:")
         for cat, iou in sorted_cats[-5:]:
             recall = category_mrecall.get(cat, 0)
-            ddp.print(f"  {cat}: IoU={100*iou:.1f}%, Recall={100*recall:.1f}%")
+            print(f"  {cat}: IoU={100*iou:.1f}%, Recall={100*recall:.1f}%")
 
     # Tests whether spatial prefixes ("nearest X", "leftmost X") degrade performance.
     # For single-instance datasets like uCO3D, spatial queries should be no-ops.
@@ -661,7 +665,7 @@ def evaluate_with_dataset(
     spatial_eval_enabled = getattr(args, 'spatial_eval', False)
 
     if spatial_eval_enabled and ddp.is_main:
-        ddp.print(f"\nSpatial Eval Pass (single-instance robustness)")
+        logger.info(f"Spatial Eval Pass (single-instance robustness)")
 
     spatial_ious_generic = []
     spatial_details_generic = defaultdict(list)
@@ -766,13 +770,13 @@ def evaluate_with_dataset(
                 'per_qualifier_iou': {q: float(v) for q, v in spatial_per_q.items()},
             }
             if ddp.is_main:
-                ddp.print(f"\nSpatial Robustness")
-                ddp.print(f"  Baseline mIoU:  {100*mean_iou:.2f}%")
-                ddp.print(f"  Spatial mIoU:   {100*spatial_mean:.2f}%  (delta={100*(spatial_mean-mean_iou):+.2f}%)")
+                print(f"Spatial Robustness")
+                print(f"  Baseline mIoU:  {100*mean_iou:.2f}%")
+                print(f"  Spatial mIoU:   {100*spatial_mean:.2f}%  (delta={100*(spatial_mean-mean_iou):+.2f}%)")
                 for q in GENERIC_SPATIAL_QUALIFIERS:
                     if q in spatial_per_q:
-                        ddp.print(f"    {q:<12} IoU={100*spatial_per_q[q]:5.1f}%  (n={len(spatial_details_generic[q])})")
-                ddp.print("="*70)
+                        print(f"    {q:<12} IoU={100*spatial_per_q[q]:5.1f}%  (n={len(spatial_details_generic[q])})")
+                print("="*70)
 
     return results
 

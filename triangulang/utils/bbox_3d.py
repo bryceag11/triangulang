@@ -2,7 +2,7 @@
 3D Bounding Box utilities.
 
 Computes 3D axis-aligned bounding boxes (AABBs) from predicted masks + depth.
-Post-processing only — no model changes, zero inference cost.
+Post-processing only: no model changes, zero inference cost.
 """
 
 import torch
@@ -22,8 +22,8 @@ def compute_3d_bbox(
     """
     Compute 3D axis-aligned bounding box from mask + depth (camera-relative).
 
-    Pipeline: mask → binary → back-project masked pixels to 3D → AABB from min/max.
-    No poses needed — everything is in camera frame.
+    Pipeline: mask -> binary -> back-project masked pixels to 3D -> AABB from min/max.
+    No poses needed: everything is in camera frame.
 
     Args:
         pred_masks: Predicted segmentation masks
@@ -38,7 +38,7 @@ def compute_3d_bbox(
             - bbox_max: [B, 3] max corner (X, Y, Z) in camera frame
             - bbox_center: [B, 3] center of AABB
             - bbox_extent: [B, 3] half-extents (width/2, height/2, depth/2)
-            - valid: [B] bool — whether each sample has a valid box
+            - valid: [B] bool, whether each sample has a valid box
             - point_clouds: list of [N_i, 3] point clouds per sample
     """
     loc = compute_3d_localization(pred_masks, depth, intrinsics, threshold)
@@ -94,7 +94,7 @@ def compute_3d_bbox_multiview(
     """
     Compute 3D bounding box from multiple views.
 
-    If extrinsics provided: transforms all points to world frame → single world-frame AABB.
+    If extrinsics provided: transforms all points to world frame -> single world-frame AABB.
     If no extrinsics: returns per-view camera-frame AABBs.
 
     Args:

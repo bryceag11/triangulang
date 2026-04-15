@@ -10,6 +10,9 @@ from triangulang.models.triangulang_model import TrianguLangModel
 from triangulang.utils.lora import LoRAManager, LoRALayer
 from triangulang.utils.scannetpp_loader import normalize_label, is_excluded_frame
 from triangulang import BPE_PATH as _BPE_PATH
+import triangulang
+
+logger = triangulang.get_logger(__name__)
 
 
 class BaselineSAM3Wrapper(torch.nn.Module):
@@ -120,29 +123,29 @@ def load_model(checkpoint_path: str, device: str = 'cuda', da3_resolution: int =
     if config_path and config_path.exists():
         with open(config_path) as f:
             config = json.load(f)
-        print(f"Loaded config from {config_path}")
+        logger.info(f"Loaded config from {config_path}")
     else:
-        print(f"WARNING: Config not found, using defaults!")
+        logger.warning(f"Config not found, using defaults!")
 
     effective_da3_res = da3_resolution if da3_resolution is not None else (config.get('da3_resolution') or 504)
-    print(f"Config: use_box_prompts={config.get('use_box_prompts', False)}, "
-          f"use_point_prompts={config.get('use_point_prompts', False)}, "
-          f"use_world_pe={config.get('use_world_pe', True)}, "
-          f"use_gasa={config.get('use_gasa', True)}, "
-          f"mask_selection={config.get('mask_selection', 'iou_match')}, "
-          f"use_iou_head={config.get('use_iou_head', False)}, "
-          f"use_spatial_tokens={config.get('use_spatial_tokens', False)}, "
-          f"pe_type={config.get('pe_type', 'world')}, "
-          f"per_layer_text={config.get('per_layer_text', False)}, "
-          f"da3_resolution={effective_da3_res}")
+    logger.debug(f"Config: use_box_prompts={config.get('use_box_prompts', False)}, "
+                 f"use_point_prompts={config.get('use_point_prompts', False)}, "
+                 f"use_world_pe={config.get('use_world_pe', True)}, "
+                 f"use_gasa={config.get('use_gasa', True)}, "
+                 f"mask_selection={config.get('mask_selection', 'iou_match')}, "
+                 f"use_iou_head={config.get('use_iou_head', False)}, "
+                 f"use_spatial_tokens={config.get('use_spatial_tokens', False)}, "
+                 f"pe_type={config.get('pe_type', 'world')}, "
+                 f"per_layer_text={config.get('per_layer_text', False)}, "
+                 f"da3_resolution={effective_da3_res}")
 
-    print("Loading SAM3...")
+    logger.info("Loading SAM3...")
     sam3_resolution = resolution if resolution is not None else config.get('resolution', 1008)
     res_source = f"--image-size override ({resolution})" if resolution is not None else "config"
-    print(f"  SAM3 img_size={sam3_resolution} ({res_source})")
+    logger.info(f"  SAM3 img_size={sam3_resolution} ({res_source})")
     sam3_model = build_sam3_image_model(bpe_path=_BPE_PATH, img_size=sam3_resolution).to(device)
 
-    print("Loading DA3...")
+    logger.info("Loading DA3...")
     da3_model = DepthAnything3.from_pretrained(
         config.get('da3_model', 'depth-anything/DA3METRIC-LARGE'),
         device=device
@@ -211,26 +214,26 @@ def load_model(checkpoint_path: str, device: str = 'cuda', da3_resolution: int =
     # Load checkpoint weights
     missing, unexpected = model.gasa_decoder.load_state_dict_compat(checkpoint['gasa_decoder'], strict=False)
     if missing:
-        print(f"WARNING: Missing keys in gasa_decoder: {missing}")
+        logger.warning(f"Missing keys in gasa_decoder: {missing}")
     if unexpected:
-        print(f"WARNING: Unexpected keys in gasa_decoder: {unexpected}")
+        logger.warning(f"Unexpected keys in gasa_decoder: {unexpected}")
     if not config.get('no_query_proj', False):
         model.query_proj.load_state_dict(checkpoint['query_proj'], strict=False)
 
     if 'mask_refiner' in checkpoint and checkpoint['mask_refiner'] is not None:
         model.mask_refiner.load_state_dict(checkpoint['mask_refiner'])
-        print("  Loaded mask_refiner weights")
+        logger.info("  Loaded mask_refiner weights")
 
     if 'sam3_seghead' in checkpoint and checkpoint['sam3_seghead'] is not None:
         if skip_trained_seghead:
-            print("Skipping trained SAM3 seghead (--skip-trained-seghead), using default SAM3 weights")
+            logger.info("Skipping trained SAM3 seghead (--skip-trained-seghead), using default SAM3 weights")
         else:
             model.sam3.segmentation_head.load_state_dict(checkpoint['sam3_seghead'])
-            print(f"Loaded trained SAM3 seghead from checkpoint")
+            logger.info(f"Loaded trained SAM3 seghead from checkpoint")
 
     if 'mask_embed' in checkpoint and checkpoint['mask_embed'] is not None:
         model.sam3.segmentation_head.mask_predictor.mask_embed.load_state_dict(checkpoint['mask_embed'])
-        print(f"Loaded trained mask_embed from checkpoint")
+        logger.info(f"Loaded trained mask_embed from checkpoint")
 
     if 'lora' in checkpoint and checkpoint['lora'] is not None:
         import torch.nn as nn
@@ -255,16 +258,16 @@ def load_model(checkpoint_path: str, device: str = 'cuda', da3_resolution: int =
                     lora_manager._adapter_count += 1
         lora_manager.load_state_dict(checkpoint['lora'])
         lora_manager.to(device)
-        print(f"Loaded LoRA state ({lora_manager.num_adapters} adapters, {lora_manager.num_parameters:,} params)")
+        logger.info(f"Loaded LoRA state ({lora_manager.num_adapters} adapters, {lora_manager.num_parameters:,} params)")
 
     model.sam3_multi_object = config.get('sam3_multi_object', False)
     model.multi_object = config.get('multi_object', False)
     if model.sam3_multi_object:
-        print(f"SAM3 multi-object mode: ENABLED (batch expansion)")
+        logger.info(f"SAM3 multi-object mode: ENABLED (batch expansion)")
 
     model.config = config  # Store for downstream use
     model.eval()
-    print(f"Loaded checkpoint from epoch {checkpoint.get('epoch', '?')}, best_iou={checkpoint.get('best_iou', 0)*100:.2f}%")
+    logger.info(f"Loaded checkpoint from epoch {checkpoint.get('epoch', '?')}, best_iou={checkpoint.get('best_iou', 0)*100:.2f}%")
     return model
 
 
@@ -280,7 +283,7 @@ def load_scene_data(scene_path: Path, semantics_dir: Path) -> Tuple[List[Path], 
     before = len(images)
     images = [img for img in images if not is_excluded_frame(scene_id, img.stem)]
     if len(images) < before:
-        print(f"  Excluded {before - len(images)} bad frames from {scene_id}")
+        logger.info(f"  Excluded {before - len(images)} bad frames from {scene_id}")
 
     anno_path = scene_path / "scans" / "segments_anno.json"
     objects = {}
@@ -320,7 +323,7 @@ def load_gt_masks(semantics_dir: Path, frame_name: str) -> Dict[int, np.ndarray]
                     masks[int(obj_id)] = (instance_map == obj_id).astype(np.float32)
             return masks
         except Exception as e:
-            print(f"Error loading {mask_path}: {e}")
+            logger.warning(f"Error loading {mask_path}: {e}")
             return {}
     return {}
 
@@ -345,7 +348,7 @@ def load_gt_poses(scene_path: Path) -> Tuple[Optional[Dict], Optional[torch.Tens
         ], dtype=torch.float32)
         return transforms, intrinsics
     except Exception as e:
-        print(f"Error loading transforms from {transforms_path}: {e}")
+        logger.warning(f"Error loading transforms from {transforms_path}: {e}")
         return None, None
 
 
@@ -392,7 +395,7 @@ def load_cached_da3_nested(
             i = data['intrinsics']
             intrinsics.append(i.float() if isinstance(i, torch.Tensor) else torch.from_numpy(i).float())
         except Exception as e:
-            print(f"Error loading cached data for {scene_id}/{stem}: {e}")
+            logger.warning(f"Error loading cached data for {scene_id}/{stem}: {e}")
             return None
 
     return {

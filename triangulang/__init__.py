@@ -1,8 +1,32 @@
 """TrianguLang: Geometry-Aware Semantic Consensus for Pose-Free 3D Localization"""
-__version__ = "1.0.0"
 
+import logging
 import sys
 from pathlib import Path
+
+
+def get_logger(name: str = None) -> logging.Logger:
+    # Get a DDP-aware logger. Only rank 0 logs; other ranks get NullHandler.
+    # Usage: logger = triangulang.get_logger(__name__)
+    logger = logging.getLogger(name or "triangulang")
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+    return logger
+
+
+def configure_logging(rank: int = 0, level: int = logging.INFO):
+    # Call once at startup to set log level and silence non-rank-0 processes.
+    root = logging.getLogger("triangulang")
+    root.setLevel(level)
+    if rank != 0:
+        root.handlers = [logging.NullHandler()]
+    elif not root.handlers or isinstance(root.handlers[0], logging.NullHandler):
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        root.handlers = [handler]
 
 PROJECT_ROOT = Path(__file__).parent.parent
 

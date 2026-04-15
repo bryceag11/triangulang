@@ -11,10 +11,13 @@ Usage:
 """
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -162,19 +165,19 @@ def main():
     from scripts.demo_locate_3d import load_model, parse_spatial_qualifier, unproject_to_3d
 
     # Load model
-    print(f"Loading model from {args.checkpoint}...")
+    logger.info(f"Loading model from {args.checkpoint}...")
     model, config = load_model(args.checkpoint, device)
 
     # Get frames
     if args.scene_dir:
         frames = get_scannetpp_frames(args.scene_dir, args.max_frames, args.stride)
-        print(f"Found {len(frames)} frames in {args.scene_dir}")
+        logger.info(f"Found {len(frames)} frames in {args.scene_dir}")
     else:
         frames = get_uco3d_frames(args.uco3d_seq, args.max_frames, args.stride)
-        print(f"Extracted {len(frames)} frames from {args.uco3d_seq}")
+        logger.info(f"Extracted {len(frames)} frames from {args.uco3d_seq}")
 
     if len(frames) == 0:
-        print("ERROR: No frames found.")
+        logger.warning("No frames found.")
         return
 
     # Parse spatial qualifier
@@ -186,7 +189,7 @@ def main():
     focal_length = args.size * 0.96
 
     # Process frames
-    print(f"Processing {len(frames)} frames with prompt: '{args.prompt}'...")
+    logger.info(f"Processing {len(frames)} frames with prompt: '{args.prompt}'...")
     processed_frames = []
 
     for idx, frame_path in enumerate(frames):
@@ -259,12 +262,12 @@ def main():
         processed_frames.append(overlay)
 
         if (idx + 1) % 10 == 0 or idx == len(frames) - 1:
-            print(f"  [{idx+1}/{len(frames)}] IoU={iou_score:.2f}, mask={mask.sum():,}px")
+            logger.info(f"  [{idx+1}/{len(frames)}] IoU={iou_score:.2f}, mask={mask.sum():,}px")
 
     # Write video
     import cv2
     if len(processed_frames) == 0:
-        print("ERROR: No frames processed.")
+        logger.warning("No frames processed.")
         return
 
     # Determine output size
@@ -292,4 +295,5 @@ def main():
     print(f"\nSaved video to {output_path} ({len(processed_frames)} frames, {args.fps} FPS, {out_w}x{out_h})")
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
     main()

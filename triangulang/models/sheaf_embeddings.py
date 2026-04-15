@@ -380,8 +380,8 @@ def compute_3d_localization(
     This is the key insight: you DON'T need camera pose estimation
     for object localization! With metric depth + mask:
         mask centroid (u, v) + depth(u, v) + intrinsics
-        → back-project → (X, Y, Z) in camera frame
-        → "object is 1.2m ahead, 0.3m left"
+        -> back-project -> (X, Y, Z) in camera frame
+        -> "object is 1.2m ahead, 0.3m left"
 
     Args:
         pred_masks: Predicted segmentation masks

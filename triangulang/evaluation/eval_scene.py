@@ -76,7 +76,7 @@ def _evaluate_scene_multi_object(
     prev_logits = {}  # k_idx -> [H, W] tensor on CPU
     use_temporal_smooth = temporal_smooth_alpha > 0.0
 
-    # Build list of (label, obj_ids, prompt, cat_label) -- use spatial override as model prompt when available
+    # Build list of (label, obj_ids, prompt, cat_label): use spatial override as model prompt when available
     # cat_label: for spatial items, use the spatial prompt (e.g. "nearest chair") so reporting can find them;
     # for regular items, use the base label.
     object_list = []
@@ -186,8 +186,8 @@ def _evaluate_scene_multi_object(
         t_end = time.perf_counter()
         inference_times.append(t_end - t_start)
 
-        # SAM3-MO mode: pred_masks is [K, 1, H, W] -- one mask per object, already matched
-        # Non-SAM3: all_masks is [1, Q, H, W] -- need Hungarian matching
+        # SAM3-MO mode: pred_masks is [K, 1, H, W], one mask per object, already matched
+        # Non-SAM3: all_masks is [1, Q, H, W], need Hungarian matching
         sam3_mo_K = outputs.get('sam3_mo_K')
         if sam3_mo and sam3_mo_K is not None:
             # SAM3-style: pred_masks[k] is the prediction for object k
@@ -225,7 +225,7 @@ def _evaluate_scene_multi_object(
                     refined_logit = torch.from_numpy(refined * 10.0 - 5.0).to(device)
                     pred_masks_k[k_idx] = refined_logit
 
-            # Direct 1:1 matching -- object k's mask is pred_masks_k[k]
+            # Direct 1:1 matching: object k's mask is pred_masks_k[k]
             matched_pairs = [(k_idx, k_idx) for k_idx in valid_objects]  # (obj_idx, pred_idx)
             pred_source = pred_masks_k
             gt_source = gt_per_object
@@ -283,7 +283,7 @@ def _evaluate_scene_multi_object(
 
         # Spatial postprocessing: after getting all masks, assign spatial labels via geometry
         # This uses depth at predicted mask centroids to determine nearest/farthest/left/right
-        # among same-label predicted masks -- leverages good segmentation + geometric reasoning
+        # among same-label predicted masks. Leverages good segmentation + geometric reasoning
         spatial_postprocess_labels = {}  # obj_k -> list of spatial cat_labels
         if sam3_mo and sam3_mo_K is not None and cached_depth is not None:
             # Group predictions by base label
@@ -528,7 +528,7 @@ def _precompute_backbone(
             with autocast('cuda', dtype=torch.float16):
                 bb_out = model.sam3.backbone.forward_image(batch_imgs)
 
-            # Slice per frame -- keep on GPU (plenty of VRAM, avoids CPU↔GPU transfer)
+            # Slice per frame: keep on GPU (plenty of VRAM, avoids CPU<->GPU transfer)
             for j in range(batch_end - batch_start):
                 frame_stem = _all_frame_stems[batch_start + j]
                 frame_data = {

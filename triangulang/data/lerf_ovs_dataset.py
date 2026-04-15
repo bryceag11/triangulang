@@ -34,6 +34,9 @@ from torch.utils.data import Dataset
 import numpy as np
 from PIL import Image, ImageDraw
 
+import triangulang
+logger = triangulang.get_logger(__name__)
+
 
 LERF_SCENES = ['figurines', 'ramen', 'teatime', 'waldo_kitchen']
 
@@ -67,77 +70,79 @@ LERF_PROMPT_OVERRIDES = {
 # (e.g., "spatula" = toy in figurines, real in waldo_kitchen).
 LERF_PROMPT_ALIASES_BY_SCENE = {
     # figurines
-    ('figurines', 'jake'): 'yellow dog with long legs',
-    ('figurines', 'miffy'): 'brown rabbit in orange tshirt',
-    ('figurines', 'waldo'): 'wheres waldo',
-    ('figurines', 'pikachu'): 'pikachu',
-    ('figurines', 'old camera'): 'vintage camera',
-    ('figurines', 'pink ice cream'): 'pink ice cream',
-    ('figurines', 'pirate hat'): 'red hat on rubber duck',
+    ('figurines', 'jake'): 'yellow dog toy',
+    ('figurines', 'miffy'): 'brown rabbit toy on edge',
+    ('figurines', 'waldo'): 'toy man with striped shirt',
+    ('figurines', 'pikachu'): 'pikachu pokemon',
+    ('figurines', 'old camera'): 'vintage camera on shelf',
+    ('figurines', 'pink ice cream'): 'cone of pink ice cream',
+    ('figurines', 'pirate hat'): 'red hat on duck figurine',
     ('figurines', 'porcelain hand'): 'white porcelain hand statue',
     ('figurines', 'rubber duck with buoy'): 'yellow rubber duck with pink necklace',
-    ('figurines', 'rubber duck with hat'): 'yellow rubber duck with red hat',
-    ('figurines', 'rubics cube'): 'rainbow rubiks cube',
+    ('figurines', 'rubber duck with hat'): 'yellow pirate duck on mat',
+    ('figurines', 'rubics cube'): 'rubix cube on table',
     ('figurines', 'tesla door handle'): 'small silver handle',
-    ('figurines', 'toy cat statue'): 'white cat statue',
+    ('figurines', 'toy cat statue'): 'small white cat with dark clothes',
     ('figurines', 'toy elephant'): 'blue elephant figurine',
     ('figurines', 'green toy chair'): 'green chair',
     ('figurines', 'red toy chair'): 'small red chair',
-    ('figurines', 'green apple'): 'granny smith apple',
-    ('figurines', 'red apple'): 'maroon plush apple',
+    ('figurines', 'green apple'): 'green ceramic apple',
+    ('figurines', 'red apple'): 'red apple figurine',
     ('figurines', 'bag'): 'black and grey bag',
-    ('figurines', 'pumpkin'): 'pumpkin',
-    ('figurines', 'spatula'): 'toy gray and red spatula',
+    ('figurines', 'spatula'): 'black spatula on table',
+    ('figurines', 'pumpkin'): 'small orange pumpkin',
     # ramen
-    ('ramen', 'kamaboko'): 'pink and white spiral',
-    ('ramen', 'corn'): 'small corn kernel',
-    ('ramen', 'nori'): 'nori seaweed',
-    ('ramen', 'wavy noodles'): 'yellow noodles',
+    ('ramen', 'kamaboko'): 'pink spiral slice in ramen',
+    ('ramen', 'corn'): 'small yellow corn',
+    ('ramen', 'nori'): 'nori sheet sticking out of bowl',
+    ('ramen', 'wavy noodles'): 'thin yellow noodles',
     ('ramen', 'onion segments'): 'chopped green onion',
-    ('ramen', 'sake cup'): 'silver cup',
+    ('ramen', 'sake cup'): 'dark cup on table',
     ('ramen', 'glass of water'): 'glass of water',
-    ('ramen', 'chopsticks'): 'wooden chopsticks',
-    ('ramen', 'bowl'): 'yellow ramen bowl',
-    ('ramen', 'napkin'): 'small paper napkin',
-    ('ramen', 'plate'): 'round plate under bowl',
-    ('ramen', 'egg'): 'sliced egg',
+    ('ramen', 'chopstick'): 'porcelain chopsticks',
+    ('ramen', 'chopsticks'): 'disposable chopsticks',
+    ('ramen', 'egg'): 'ramen egg',
     ('ramen', 'hand'): 'hand',
-    ('ramen', 'spoon'): 'soup spoon on plate',
+    ('ramen', 'bowl'): 'yellow bowl on round plate',
+    ('ramen', 'plate'): 'silver plate on table under bowl',
+    ('ramen', 'napkin'): 'white napkin',
+    ('ramen', 'spoon'): 'soup ladle on bowl',
     # teatime
-    ('teatime', 'bear nose'): 'tan teddy bear nose',
-    ('teatime', 'hooves'): 'stuffed animal hooves',
-    ('teatime', 'dall-e brand'): 'white text nameplate',
-    ('teatime', 'coffee'): 'coffee cup',
-    ('teatime', 'coffee mug'): 'coffee mug',
-    ('teatime', 'tea in a glass'): 'glass of tea',
-    ('teatime', 'three cookies'): 'three cookies',
-    ('teatime', 'bag of cookies'): 'bag of cookies',
-    ('teatime', 'yellow pouf'): 'yellow ottoman pouf',
+    ('teatime', 'bear nose'): 'teddy bear nose',
+    ('teatime', 'hooves'): 'fluffy sheep feet',
+    ('teatime', 'dall-e brand'): 'tag on blue necklace on sheep',
+    ('teatime', 'coffee'): 'small white coffee cup on table',
+    ('teatime', 'coffee mug'): 'small white coffee cup on table',
+    ('teatime', 'tea in a glass'): 'glass with tea',
+    ('teatime', 'three cookies'): 'three cookies on square plate',
+    ('teatime', 'bag of cookies'): 'cellophane cookie bag',
+    ('teatime', 'yellow pouf'): 'yellow round seat',
     ('teatime', 'sheep'): 'sheep',
-    ('teatime', 'stuffed bear'): 'brown teddy bear',
-    ('teatime', 'paper napkin'): 'paper napkin',
+    ('teatime', 'stuffed bear'): 'large brown plush bear',
+    ('teatime', 'paper napkin'): 'tissue paper on table',
     ('teatime', 'apple'): 'red apple',
-    ('teatime', 'plate'): 'white plate',
+    ('teatime', 'plate'): 'serving plate on wood table',
     # waldo_kitchen
-    ('waldo_kitchen', 'Stainless steel pots'): 'shiny silver pot',
+    ('waldo_kitchen', 'Stainless steel pots'): 'steel pot',
     ('waldo_kitchen', 'ottolenghi'): 'ottolenghi cookbook',
     ('waldo_kitchen', 'dark cup'): 'dark colored cup',
-    ('waldo_kitchen', 'frog cup'): 'white cup with frog ',
-    ('waldo_kitchen', 'red cup'): 'red coffee mug',
-    ('waldo_kitchen', 'plastic ladle'): 'green ladle plastic',
+    ('waldo_kitchen', 'frog cup'): 'white cup with frog cartoon',
+    ('waldo_kitchen', 'red cup'): 'red cup',
+    ('waldo_kitchen', 'plastic ladle'): 'green ladle hanging from hook',
     ('waldo_kitchen', 'pour-over vessel'): 'pour over coffee maker',
     ('waldo_kitchen', 'yellow desk'): 'yellow countertop',
-    ('waldo_kitchen', 'refrigerator'): 'white kitchen fridge',
-    ('waldo_kitchen', 'spatula'): 'red spatula',
+    ('waldo_kitchen', 'refrigerator'): 'refrigerator',
+    ('waldo_kitchen', 'spatula'): 'red silicone paddle on wall',
     ('waldo_kitchen', 'ketchup'): 'tomato paste',
-    ('waldo_kitchen', 'knife'): 'kitchen knife',
-    ('waldo_kitchen', 'plate'): 'dinner plates',
+    ('waldo_kitchen', 'knife'): 'knife on magnetic strip',
+    ('waldo_kitchen', 'plate'): 'dinner plate in kitchen sink',
     ('waldo_kitchen', 'napkin'): 'white napkin',
-    ('waldo_kitchen', 'sink'): 'white kitchen sink',
-    ('waldo_kitchen', 'spoon'): 'silver shiny spoon',
+    ('waldo_kitchen', 'bowl'): 'ramen bowl',
+    ('waldo_kitchen', 'sink'): 'kitchen sink',
+    ('waldo_kitchen', 'spoon'): 'spoon in cup',
     ('waldo_kitchen', 'cabinet'): 'kitchen cabinet',
-    ('waldo_kitchen', 'pot'): 'shiny pot',
-    ('waldo_kitchen', 'toaster'): 'toaster',
+    ('waldo_kitchen', 'pot'): 'cooking pot',
+    ('waldo_kitchen', 'toaster'): 'silver toaster on yellow surface',
 }
 
 # Global fallback (used when scene is unknown)
@@ -251,7 +256,7 @@ def colmap_to_intrinsic(camera: Dict) -> Tuple[np.ndarray, int, int]:
 
 
 def polygon_to_mask(segmentation: List[List[float]], width: int, height: int) -> np.ndarray:
-    """Convert polygon segmentation to binary mask."""
+    # Convert polygon segmentation to binary mask
     mask = Image.new('L', (width, height), 0)
     draw = ImageDraw.Draw(mask)
     polygon = [(pt[0], pt[1]) for pt in segmentation]
@@ -304,7 +309,7 @@ class LERFOVSDataset(Dataset):
         for scene_name in scenes_to_load:
             scene_dir = self.data_root / scene_name
             if not scene_dir.exists():
-                print(f"  [LERF] Scene {scene_name} not found at {scene_dir}")
+                logger.warning(f"  [LERF] Scene {scene_name} not found at {scene_dir}")
                 continue
 
             scene = self._load_scene(scene_name, scene_dir)
@@ -325,7 +330,7 @@ class LERFOVSDataset(Dataset):
                     })
 
         eval_frame_counts = [len(s['eval_frames']) for s in self.scenes]
-        print(f"LERF-OVS Dataset: {len(self.scenes)} scenes, {len(self.samples)} samples "
+        logger.info(f"LERF-OVS Dataset: {len(self.scenes)} scenes, {len(self.samples)} samples "
               f"({split}, {eval_frame_counts} eval frames per scene)")
 
     def _load_scene(self, scene_name: str, scene_dir: Path) -> Optional[Dict]:
@@ -335,7 +340,7 @@ class LERFOVSDataset(Dataset):
         label_dir = self.data_root / 'label' / scene_name
 
         if not sparse_dir.exists() or not images_dir.exists():
-            print(f"  [LERF] Missing sparse/images for {scene_name}")
+            logger.warning(f"  [LERF] Missing sparse/images for {scene_name}")
             return None
 
         cameras = load_colmap_cameras(sparse_dir / 'cameras.bin')

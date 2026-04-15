@@ -11,8 +11,8 @@ def hungarian_match(pred_masks, gt_masks, num_objects, text_scores=None):
         text_scores: [Q, K] optional per-text scores for cost weighting
 
     Returns:
-        matched_pairs: List[(query_idx, gt_idx)] — K pairs
-        unmatched_queries: List[int] — Q-K unmatched query indices
+        matched_pairs: List[(query_idx, gt_idx)], K pairs
+        unmatched_queries: List[int], Q-K unmatched query indices
     """
     from scipy.optimize import linear_sum_assignment
 
@@ -54,8 +54,8 @@ def text_greedy_match(text_scores, num_objects):
         num_objects: K (actual number of objects)
 
     Returns:
-        matched_pairs: List[(query_idx, gt_idx)] — K pairs
-        unmatched_queries: List[int] — Q-K unmatched query indices
+        matched_pairs: List[(query_idx, gt_idx)], K pairs
+        unmatched_queries: List[int], Q-K unmatched query indices
     """
     Q = text_scores.shape[0]
     K = num_objects

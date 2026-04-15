@@ -12,11 +12,14 @@ Usage:
 
 import sys
 import argparse
+import logging
 from pathlib import Path
 import numpy as np
 from PIL import Image
 import torch
 import torch.nn.functional as F
+
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -151,20 +154,20 @@ def process_spatial_query(model, image_tensor, prompt, device):
     """Process a query with spatial qualifier."""
     qualifier_type, base_prompt = parse_spatial_qualifier(prompt)
 
-    print(f"  Parsed: qualifier={qualifier_type}, base='{base_prompt}'")
+    logger.info(f"  Parsed: qualifier={qualifier_type}, base='{base_prompt}'")
 
     # Get all candidate masks
     masks, depths = get_all_masks_nms(model, image_tensor, base_prompt, device)
-    print(f"  Found {len(masks)} candidate masks for '{base_prompt}'")
+    logger.info(f"  Found {len(masks)} candidate masks for '{base_prompt}'")
 
     if len(masks) == 0:
-        print("  No masks found!")
+        logger.warning("  No masks found!")
         return None, None
 
     # Filter by spatial qualifier
     if qualifier_type:
         best_mask, best_idx = filter_by_spatial_qualifier(masks, depths, qualifier_type)
-        print(f"  Selected mask {best_idx} based on '{qualifier_type}'")
+        logger.info(f"  Selected mask {best_idx} based on '{qualifier_type}'")
     else:
         best_mask = masks[0]
         best_idx = 0
@@ -173,7 +176,7 @@ def process_spatial_query(model, image_tensor, prompt, device):
     depth = depths[best_idx]
     centroid = get_mask_centroid(best_mask)
     depth_val = get_depth_at_centroid(best_mask, depth)
-    print(f"  Centroid: ({centroid[0]:.1f}, {centroid[1]:.1f}), Depth: {depth_val:.2f}m")
+    logger.info(f"  Centroid: ({centroid[0]:.1f}, {centroid[1]:.1f}), Depth: {depth_val:.2f}m")
 
     return best_mask, depth
 
@@ -182,32 +185,32 @@ def process_relational_query_sequential(model, image_tensor, prompt, device):
     target, reference, relation = parse_relational_query(prompt)
 
     if target is None:
-        print(f"  Not a relational query, falling back to spatial query")
+        logger.info(f"  Not a relational query, falling back to spatial query")
         return process_spatial_query(model, image_tensor, prompt, device)
 
-    print(f"  Parsed: target='{target}', reference='{reference}', relation='{relation}'")
+    logger.info(f"  Parsed: target='{target}', reference='{reference}', relation='{relation}'")
 
     # Query 1: Find reference object
-    print(f"  Finding reference: '{reference}'")
+    logger.info(f"  Finding reference: '{reference}'")
     with torch.no_grad():
         ref_outputs = model(image_tensor, [reference], gt_masks=None)
     ref_mask = (ref_outputs['pred_masks'][0, 0] > 0).cpu().numpy()
     ref_depth = ref_outputs['depth'][0, 0].cpu().numpy()
 
     if ref_mask.sum() < 100:
-        print(f"  Reference object '{reference}' not found!")
+        logger.warning(f"  Reference object '{reference}' not found!")
         return None, None
 
     ref_centroid = get_mask_centroid(ref_mask)
-    print(f"  Reference centroid: ({ref_centroid[0]:.1f}, {ref_centroid[1]:.1f})")
+    logger.info(f"  Reference centroid: ({ref_centroid[0]:.1f}, {ref_centroid[1]:.1f})")
 
     # Query 2: Find all target objects
-    print(f"  Finding targets: '{target}'")
+    logger.info(f"  Finding targets: '{target}'")
     target_masks, target_depths = get_all_masks_nms(model, image_tensor, target, device)
-    print(f"  Found {len(target_masks)} candidate targets")
+    logger.info(f"  Found {len(target_masks)} candidate targets")
 
     if len(target_masks) == 0:
-        print(f"  No target objects found!")
+        logger.warning(f"  No target objects found!")
         return None, None
 
     # Filter by relation
@@ -217,7 +220,7 @@ def process_relational_query_sequential(model, image_tensor, prompt, device):
 
     if best_mask is not None:
         centroid = get_mask_centroid(best_mask)
-        print(f"  Selected target {best_idx} at ({centroid[0]:.1f}, {centroid[1]:.1f})")
+        logger.info(f"  Selected target {best_idx} at ({centroid[0]:.1f}, {centroid[1]:.1f})")
 
     return best_mask, ref_depth
 
@@ -226,11 +229,11 @@ def process_relational_query_parallel(model, image_tensor, prompt, device):
     target, reference, relation = parse_relational_query(prompt)
 
     if target is None:
-        print(f"  Not a relational query, falling back to spatial query")
+        logger.info(f"  Not a relational query, falling back to spatial query")
         return process_spatial_query(model, image_tensor, prompt, device)
 
-    print(f"  Parsed: target='{target}', reference='{reference}', relation='{relation}'")
-    print(f"  Using parallel multi-prompt query")
+    logger.info(f"  Parsed: target='{target}', reference='{reference}', relation='{relation}'")
+    logger.info(f"  Using parallel multi-prompt query")
 
     # Single forward pass with both prompts
     # Note: This requires the model to support multiple text prompts
@@ -245,14 +248,14 @@ def process_relational_query_parallel(model, image_tensor, prompt, device):
     ref_depth = ref_outputs['depth'][0, 0].cpu().numpy()
 
     if ref_mask.sum() < 100:
-        print(f"  Reference object '{reference}' not found!")
+        logger.warning(f"  Reference object '{reference}' not found!")
         return None, None
 
     # Get all target masks
     target_masks, target_depths = get_all_masks_nms(model, image_tensor, target, device)
 
     if len(target_masks) == 0:
-        print(f"  No target objects found!")
+        logger.warning(f"  No target objects found!")
         return None, None
 
     # Filter by relation
@@ -294,7 +297,7 @@ def visualize_result(image, mask, depth, output_path, prompt):
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"  Saved: {output_path}")
+    logger.info(f"  Saved: {output_path}")
 
 def main():
     parser = argparse.ArgumentParser(description='Spatial and Relational Query Demo')
@@ -321,7 +324,7 @@ def main():
     print(f"Image: {args.image}")
 
     # Load model
-    print(f"\nLoading model from {args.checkpoint}...")
+    logger.info(f"Loading model from {args.checkpoint}...")
     model, config = load_model(args.checkpoint, args.device)
 
     # Load and preprocess image
@@ -337,7 +340,7 @@ def main():
     # Check if relational or spatial query
     target, reference, relation = parse_relational_query(args.prompt)
 
-    print(f"\nProcessing query...")
+    logger.info(f"Processing query...")
     if target is not None:
         # Relational query
         if args.parallel:
@@ -354,10 +357,11 @@ def main():
         mask = resize(mask.astype(float), image_np.shape[:2], order=0) > 0.5
 
     # Visualize
-    print(f"\nSaving visualization...")
+    logger.info(f"Saving visualization...")
     visualize_result(image_np, mask, depth, args.output, args.prompt)
 
     print(f"\nDone!")
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
     main()

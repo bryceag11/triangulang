@@ -11,7 +11,7 @@ class ExplicitSheafLaplacian(nn.Module):
 
     Given a view graph with V views and E edges (view pairs with overlap),
     constructs:
-    - δ: C^0(F) → C^1(F), the coboundary operator
+    - δ: C^0(F) -> C^1(F), the coboundary operator
     - L_F = δ^T δ, the sheaf Laplacian
     - Energy = s^T L_F s = ||δ(s)||^2
 
@@ -67,7 +67,7 @@ class ExplicitSheafLaplacian(nn.Module):
         Compute sheaf Laplacian energy ||δ(s)||^2 = s^T L_F s.
 
         For scalar sheaf:
-            data: list of [N_points] tensors (one per view) — scalar predictions
+            data: list of [N_points] tensors (one per view), scalar predictions
             contexts: list of (ctx_source, ctx_target) pairs per edge
 
         For feature sheaf:

@@ -13,6 +13,9 @@ import torch
 from torch.utils.data import Dataset
 from PIL import Image
 
+import triangulang
+logger = triangulang.get_logger(__name__)
+
 
 # Common indoor object prompts for ScanNet++
 SCANNETPP_PROMPTS = {
@@ -76,7 +79,7 @@ def load_scene_list(data_root: Path, split: str) -> List[str]:
                 break
 
     if not split_file.exists():
-        print(f"Warning: Split file not found: {split_file}")
+        logger.warning(f"Split file not found: {split_file}")
         return []
 
     with open(split_file) as f:
@@ -240,7 +243,7 @@ class ScanNetPPDataset(Dataset):
         self.samples = []
         self.scene_transforms = {}  # Cache transforms per scene
 
-        print(f"\nLoading ScanNet++ dataset ({split})...")
+        logger.info(f"Loading ScanNet++ dataset ({split})...")
 
         from tqdm import tqdm
 
@@ -297,7 +300,7 @@ class ScanNetPPDataset(Dataset):
 
                     self.samples.append((img_path, scene_id, prompt))
 
-        print(f"Loaded {len(self.samples)} samples from {len(self.scene_transforms)} scenes")
+        logger.info(f"Loaded {len(self.samples)} samples from {len(self.scene_transforms)} scenes")
 
     def __len__(self):
         return len(self.samples)

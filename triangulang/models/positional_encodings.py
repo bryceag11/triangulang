@@ -199,7 +199,7 @@ class RayRoPE3D(nn.Module):
     - Attention depends on RELATIVE geometry (not absolute world coords)
 
     Unlike original RayRoPE:
-    - Uses known depth from DA3 (not predicted from tokens) — we already have good metric depth
+    - Uses known depth from DA3 (not predicted from tokens), since we already have good metric depth
     - Optional sigma from DA3 depth_conf (not learned from scratch)
     - Simpler: 4 coordinates instead of 12 (works with our head_dim=32)
 
@@ -471,7 +471,7 @@ class RayRoPE3D(nn.Module):
         key_cos, key_sin = self.compute_rope_angles(key_coords, depth_conf)
         query_cos, query_sin = self.compute_rope_angles(query_coords, depth_conf=None)
 
-        # Apply rotation to Q and K (NOT V — keeps position out of values)
+        # Apply rotation to Q and K (NOT V: keeps position out of values)
         Q_rot = self.apply_rope(Q, query_cos, query_sin)
         K_rot = self.apply_rope(K, key_cos, key_sin)
 

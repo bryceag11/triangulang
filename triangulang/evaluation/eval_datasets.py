@@ -8,6 +8,9 @@ from typing import Dict, List, Optional
 from collections import defaultdict
 from tqdm import tqdm
 from datetime import datetime
+import triangulang
+
+logger = triangulang.get_logger(__name__)
 
 from triangulang.data.dataset_factory import get_dataset, get_dataset_config
 from triangulang.evaluation.visualization import (
@@ -27,27 +30,27 @@ def _evaluate_uco3d(model, args, device, ddp, data_root, output_dir, viz_dir, to
         args.per_frame = True
         per_frame_default = True
 
-    ddp.print(f"\nuCO3D Evaluation")
-    ddp.print(f"Using UCO3DMultiViewDataset with:")
-    ddp.print(f"  - 50 representative sequences")
-    ddp.print(f"  - 50 frames per sequence (uniformly sampled)")
-    ddp.print(f"  - Category name as text prompt")
-    ddp.print(f"  - Prompt normalization: {args.normalize_prompts}")
+    logger.info(f"uCO3D Evaluation")
+    logger.debug(f"Using UCO3DMultiViewDataset with:")
+    logger.debug(f"  - 50 representative sequences")
+    logger.debug(f"  - 50 frames per sequence (uniformly sampled)")
+    logger.debug(f"  - Category name as text prompt")
+    logger.debug(f"  - Prompt normalization: {args.normalize_prompts}")
     num_seq = args.num_sequences if args.num_sequences else 50
     frames_per_seq = args.frames_per_sequence if args.frames_per_sequence else 50
-    ddp.print(f"  - Sequences: {num_seq}" + (" (paper default)" if args.num_sequences is None else ""))
-    ddp.print(f"  - Frames/sequence: {frames_per_seq}" + (" (paper default)" if args.frames_per_sequence is None else ""))
+    logger.debug(f"  - Sequences: {num_seq}" + (" (paper default)" if args.num_sequences is None else ""))
+    logger.debug(f"  - Frames/sequence: {frames_per_seq}" + (" (paper default)" if args.frames_per_sequence is None else ""))
     if per_frame_default:
-        ddp.print(f"  - Per-frame mode (default for uCO3D, use --view-chunk-size N for cross-view)")
+        logger.debug(f"  - Per-frame mode (default for uCO3D, use --view-chunk-size N for cross-view)")
     elif args.per_frame:
-        ddp.print(f"  - Per-frame mode (explicit)")
+        logger.debug(f"  - Per-frame mode (explicit)")
     else:
-        ddp.print(f"  - Chunked mode with view-chunk-size={args.view_chunk_size}")
+        logger.debug(f"  - Chunked mode with view-chunk-size={args.view_chunk_size}")
     if getattr(args, 'batch_da3', False):
         da3_cs = args.view_chunk_size if args.view_chunk_size > 0 else 16
-        ddp.print(f"  - Batched DA3: enabled (chunk-size={da3_cs})")
-        ddp.print(f"    → DA3 processes views together for cross-view depth consistency")
-        ddp.print(f"    → Segmentation still runs per-frame (faster eval)")
+        logger.debug(f"  - Batched DA3: enabled (chunk-size={da3_cs})")
+        logger.debug(f"    -> DA3 processes views together for cross-view depth consistency")
+        logger.debug(f"    -> Segmentation still runs per-frame (faster eval)")
 
     # Create evaluation dataset with configurable sequences/frames
     # If --fold is specified, use k-fold CV splitting
@@ -55,7 +58,7 @@ def _evaluate_uco3d(model, args, device, ddp, data_root, output_dir, viz_dir, to
     kfold_fold = args.fold
 
     if kfold_fold is not None:
-        ddp.print(f"  - K-fold CV: fold {kfold_fold}/{kfold_num_folds} as validation")
+        logger.info(f"  - K-fold CV: fold {kfold_fold}/{kfold_num_folds} as validation")
 
     eval_dataset = create_uco3d_eval_dataset(
         data_root=str(data_root),
@@ -87,7 +90,7 @@ def _evaluate_uco3d(model, args, device, ddp, data_root, output_dir, viz_dir, to
 
     # Paper-quality grid visualization (uCO3D path)
     if uco3d_paper_viz_pool and ddp.is_main:
-        ddp.print("\nGenerating paper-quality grid visualizations for uCO3D...")
+        logger.info("Generating paper-quality grid visualizations for uCO3D...")
         generate_paper_visualizations(uco3d_paper_viz_pool, args, output_dir)
 
     # Cross-fold analysis (same as ScanNet++ evaluation)
@@ -96,10 +99,11 @@ def _evaluate_uco3d(model, args, device, ddp, data_root, output_dir, viz_dir, to
         per_cat_recall = results.get('per_category_recall', {})
 
         if len(per_cat_iou) >= args.num_folds:
-            ddp.print(f"\n{'='*70}")
-            ddp.print(f"CROSS-FOLD ANALYSIS ({args.num_folds} folds)")
-            ddp.print("="*70)
-            ddp.print("Grouping categories into folds for per-group performance analysis\n")
+            print()
+            print("="*70)
+            print(f"CROSS-FOLD ANALYSIS ({args.num_folds} folds)")
+            print("="*70)
+            print("Grouping categories into folds for per-group performance analysis\n")
 
             # Sort categories alphabetically for deterministic fold assignment
             sorted_categories = sorted(per_cat_iou.keys())
@@ -128,21 +132,21 @@ def _evaluate_uco3d(model, args, device, ddp, data_root, output_dir, viz_dir, to
                     'mean_recall': float(fold_mean_recall),
                 })
 
-                ddp.print(f"Fold {fold_idx + 1}/{args.num_folds}: {len(fold_categories)} categories")
-                ddp.print(f"  Mean IoU:    {100*fold_mean_iou:.2f}%")
-                ddp.print(f"  Mean Recall: {100*fold_mean_recall:.2f}%")
-                ddp.print(f"  Categories:  {', '.join(fold_categories[:5])}" +
-                          (f", ... (+{len(fold_categories)-5} more)" if len(fold_categories) > 5 else ""))
-                ddp.print()
+                print(f"Fold {fold_idx + 1}/{args.num_folds}: {len(fold_categories)} categories")
+                print(f"  Mean IoU:    {100*fold_mean_iou:.2f}%")
+                print(f"  Mean Recall: {100*fold_mean_recall:.2f}%")
+                print(f"  Categories:  {', '.join(fold_categories[:5])}" +
+                      (f", ... (+{len(fold_categories)-5} more)" if len(fold_categories) > 5 else ""))
+                print()
 
             # Find best/worst folds (matching ScanNet++ format)
             best_fold = max(fold_results, key=lambda x: x['mean_iou'])
             worst_fold = min(fold_results, key=lambda x: x['mean_iou'])
 
-            ddp.print(f"Best fold: Fold {best_fold['fold_id'] + 1} (mIoU={100*best_fold['mean_iou']:.2f}%)")
-            ddp.print(f"Worst fold: Fold {worst_fold['fold_id'] + 1} (mIoU={100*worst_fold['mean_iou']:.2f}%)")
-            ddp.print(f"Performance gap: {100*(best_fold['mean_iou'] - worst_fold['mean_iou']):.2f}%")
-            ddp.print("="*70)
+            print(f"Best fold: Fold {best_fold['fold_id'] + 1} (mIoU={100*best_fold['mean_iou']:.2f}%)")
+            print(f"Worst fold: Fold {worst_fold['fold_id'] + 1} (mIoU={100*worst_fold['mean_iou']:.2f}%)")
+            print(f"Performance gap: {100*(best_fold['mean_iou'] - worst_fold['mean_iou']):.2f}%")
+            print("="*70)
 
             results['fold_results'] = fold_results
 
@@ -151,7 +155,7 @@ def _evaluate_uco3d(model, args, device, ddp, data_root, output_dir, viz_dir, to
         results_file = output_dir / 'results.json'
         with open(results_file, 'w') as f:
             json.dump(results, f, indent=2)
-        ddp.print(f"\nResults saved to: {results_file}")
+        logger.info(f"Results saved to: {results_file}")
 
         # Save config (matching ScanNet++ format)
         config = {
@@ -184,7 +188,7 @@ def _evaluate_uco3d(model, args, device, ddp, data_root, output_dir, viz_dir, to
         }
         with open(output_dir / 'config.json', 'w') as f:
             json.dump(config, f, indent=2)
-        ddp.print(f"Config saved to: {output_dir / 'config.json'}")
+        logger.info(f"Config saved to: {output_dir / 'config.json'}")
 
 
 
@@ -193,11 +197,11 @@ def _evaluate_uco3d(model, args, device, ddp, data_root, output_dir, viz_dir, to
 def _evaluate_nvos(model, args, device, ddp, data_root, output_dir, viz_dir):
     from triangulang.data.nvos_dataset import NVOSDataset, NVOS_PROMPTS
 
-    ddp.print(f"\nNVOS Evaluation")
+    logger.info(f"NVOS Evaluation")
     if args.baseline_sam3:
-        ddp.print(f"  Mode: BASELINE SAM3 (native decoder, no GASA/depth/cross-view)")
-    ddp.print(f"  7 scenes from LLFF (orchid excluded)")
-    ddp.print(f"  Metric: IoU on target frame (single-frame, text-only)")
+        logger.info(f"  Mode: BASELINE SAM3 (native decoder, no GASA/depth/cross-view)")
+    logger.debug(f"  7 scenes from LLFF (orchid excluded)")
+    logger.debug(f"  Metric: IoU on target frame (single-frame, text-only)")
 
     # Resolve image size
     resolution = args.image_size or model.resolution
@@ -213,7 +217,7 @@ def _evaluate_nvos(model, args, device, ddp, data_root, output_dir, viz_dir):
     )
 
     if len(eval_dataset) == 0:
-        ddp.print("ERROR: No NVOS scenes found. Check --data-root.")
+        logger.warning("No NVOS scenes found. Check --data-root.")
         return
 
     dataloader = torch.utils.data.DataLoader(
@@ -319,7 +323,7 @@ def _evaluate_nvos(model, args, device, ddp, data_root, output_dir, viz_dir):
         except Exception as e:
             if ddp.is_main:
                 import traceback
-                print(f"NVOS error on {batch.get('scene_id', '?')}: {e}")
+                logger.warning(f"NVOS error on {batch.get('scene_id', '?')}: {e}")
                 traceback.print_exc()
             continue
 
@@ -329,14 +333,15 @@ def _evaluate_nvos(model, args, device, ddp, data_root, output_dir, viz_dir):
         per_scene = {k: np.mean(v) * 100 for k, v in scene_ious.items()}
         scene_mean_iou = np.mean(list(per_scene.values())) if per_scene else 0.0
 
-        ddp.print(f"\n{'='*50}")
-        ddp.print(f"NVOS Results ({len(all_ious)} samples, {len(scene_ious)} scenes)")
-        ddp.print(f"{'='*50}")
-        ddp.print(f"  Sample mIoU: {mean_iou:.2f}%")
-        ddp.print(f"  Scene  mIoU: {scene_mean_iou:.2f}%")
-        ddp.print(f"\n  Per-scene IoU:")
+        print()
+        print("="*50)
+        print(f"NVOS Results ({len(all_ious)} samples, {len(scene_ious)} scenes)")
+        print("="*50)
+        print(f"  Sample mIoU: {mean_iou:.2f}%")
+        print(f"  Scene  mIoU: {scene_mean_iou:.2f}%")
+        print(f"  Per-scene IoU:")
         for scene, siou in sorted(per_scene.items()):
-            ddp.print(f"    {scene:20s}: {siou:.2f}%")
+            print(f"    {scene:20s}: {siou:.2f}%")
 
         results = {
             'dataset': 'nvos',
@@ -350,10 +355,10 @@ def _evaluate_nvos(model, args, device, ddp, data_root, output_dir, viz_dir):
         results_file = output_dir / 'results.json'
         with open(results_file, 'w') as f:
             json.dump(results, f, indent=2)
-        ddp.print(f"\nResults saved to: {results_file}")
+        logger.info(f"Results saved to: {results_file}")
 
         if args.visualize:
-            ddp.print(f"Visualizations saved to: {viz_dir / 'nvos'}")
+            logger.info(f"Visualizations saved to: {viz_dir / 'nvos'}")
 
 
 
@@ -361,11 +366,11 @@ def _evaluate_nvos(model, args, device, ddp, data_root, output_dir, viz_dir):
 def _evaluate_partimagenet(model, args, device, ddp, data_root, output_dir, viz_dir):
     from triangulang.data.partimagenet_dataset import PartImageNetDataset, create_partimagenet_eval_dataset
 
-    ddp.print(f"\nPartImageNet Evaluation")
-    ddp.print(f"Using PartImageNetDataset with:")
-    ddp.print(f"  - Split: {args.split}")
-    ddp.print(f"  - Part query mode: all (evaluates all parts)")
-    ddp.print(f"  - 11 super-categories with part-level annotations")
+    logger.info(f"PartImageNet Evaluation")
+    logger.debug(f"Using PartImageNetDataset with:")
+    logger.debug(f"  - Split: {args.split}")
+    logger.debug(f"  - Part query mode: all (evaluates all parts)")
+    logger.debug(f"  - 11 super-categories with part-level annotations")
 
     # Create eval dataset
     eval_dataset = create_partimagenet_eval_dataset(
@@ -376,7 +381,7 @@ def _evaluate_partimagenet(model, args, device, ddp, data_root, output_dir, viz_
         max_samples=args.max_scenes,  # Use max_scenes to limit samples
     )
 
-    ddp.print(f"  - Samples: {len(eval_dataset)}")
+    logger.info(f"  - Samples: {len(eval_dataset)}")
 
     # Run evaluation using dataset (same as uCO3D)
     results = evaluate_with_dataset(
@@ -394,6 +399,6 @@ def _evaluate_partimagenet(model, args, device, ddp, data_root, output_dir, viz_
         results_file = output_dir / 'results.json'
         with open(results_file, 'w') as f:
             json.dump(results, f, indent=2)
-        ddp.print(f"\nResults saved to: {results_file}")
+        logger.info(f"Results saved to: {results_file}")
 
 

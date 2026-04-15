@@ -14,14 +14,15 @@ Output:
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
-from collections import defaultdict
 from multiprocessing import Pool, cpu_count
-from functools import partial
 
 import numpy as np
 from tqdm import tqdm
+
+logger = logging.getLogger(__name__)
 
 # Add paths
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -31,13 +32,13 @@ try:
     HAS_TRIMESH = True
 except ImportError:
     HAS_TRIMESH = False
-    print("Warning: trimesh not installed. Run: pip install trimesh")
+    logger.warning("trimesh not installed. Run: pip install trimesh")
 
 # Constants
 SCANNETPP_ROOT = Path(__file__).parent.parent / "data" / "scannetpp"
 
+# Load vertex-to-object ID mapping
 def load_vertex_object_ids(scene_path: Path):
-    """Load vertex-to-object ID mapping."""
     # Try segments file
     segments_path = scene_path / "scans" / "segments.json"
     if segments_path.exists():
@@ -57,8 +58,8 @@ def load_vertex_object_ids(scene_path: Path):
 
     return None, None
 
+# Get list of object IDs from annotations
 def get_object_ids_from_annotations(scene_path: Path):
-    """Get list of object IDs from annotations."""
     anno_path = scene_path / "scans" / "segments_anno.json"
     if not anno_path.exists():
         return {}
@@ -75,8 +76,8 @@ def get_object_ids_from_annotations(scene_path: Path):
 
     return obj_id_to_label
 
+# Compute 3D centroid (median) for an object
 def compute_centroid_for_object(vertices: np.ndarray, vertex_obj_ids: np.ndarray, obj_id: int):
-    """Compute 3D centroid (median) for an object."""
     mask = vertex_obj_ids == obj_id
     if not np.any(mask):
         return None
@@ -86,8 +87,8 @@ def compute_centroid_for_object(vertices: np.ndarray, vertex_obj_ids: np.ndarray
     centroid = np.median(obj_vertices, axis=0)
     return centroid.tolist()
 
+# Process single scene, return dict of obj_id -> centroid
 def process_scene(scene_id: str, data_root: Path):
-    """Process single scene, return dict of obj_id -> centroid."""
     scene_path = data_root / "data" / scene_id
 
     # Load mesh
@@ -125,8 +126,8 @@ def process_scene(scene_id: str, data_root: Path):
 
     return centroids, None
 
+# Get list of scenes from data directory
 def get_all_scenes(data_root: Path, split: str = "train", max_scenes: int = None):
-    """Get list of scenes from data directory."""
     data_dir = data_root / "data"
     if not data_dir.exists():
         raise FileNotFoundError(f"Data directory not found: {data_dir}")
@@ -138,8 +139,8 @@ def get_all_scenes(data_root: Path, split: str = "train", max_scenes: int = None
 
     return scenes
 
+# Wrapper for multiprocessing - unpacks args tuple
 def process_scene_wrapper(args):
-    """Wrapper for multiprocessing - unpacks args tuple."""
     scene_id, data_root = args
     return scene_id, process_scene(scene_id, data_root)
 
@@ -166,9 +167,9 @@ def main():
     output_path = Path(args.output) if args.output else data_root / "centroid_cache.json"
     num_workers = args.num_workers if args.num_workers else cpu_count()
 
-    print(f"Data root: {data_root}")
-    print(f"Output: {output_path}")
-    print(f"Workers: {num_workers}")
+    logger.info(f"Data root: {data_root}")
+    logger.info(f"Output: {output_path}")
+    logger.info(f"Workers: {num_workers}")
 
     # Get scenes
     if args.split == 'both':
@@ -178,23 +179,23 @@ def main():
     else:
         scenes = get_all_scenes(data_root, args.split, args.max_scenes)
 
-    print(f"\nProcessing {len(scenes)} scenes")
+    logger.info(f"Processing {len(scenes)} scenes")
 
     # Load existing cache if present
     all_centroids = {}
     if output_path.exists():
         with open(output_path) as f:
             all_centroids = json.load(f)
-        print(f"Loaded existing cache with {len(all_centroids)} scenes")
+        logger.info(f"Loaded existing cache with {len(all_centroids)} scenes")
 
     # Filter out already cached scenes
     scenes_to_process = [s for s in scenes if s not in all_centroids]
     already_cached = len(scenes) - len(scenes_to_process)
     if already_cached > 0:
-        print(f"Skipping {already_cached} already-cached scenes")
+        logger.info(f"Skipping {already_cached} already-cached scenes")
 
     if not scenes_to_process:
-        print("All scenes already cached!")
+        logger.info("All scenes already cached!")
         return
 
     success = already_cached
@@ -202,7 +203,7 @@ def main():
 
     # Use multiprocessing for parallel processing
     if num_workers > 1 and len(scenes_to_process) > 1:
-        print(f"\nProcessing {len(scenes_to_process)} scenes with {num_workers} workers...")
+        logger.info(f"Processing {len(scenes_to_process)} scenes with {num_workers} workers...")
         work_items = [(scene_id, data_root) for scene_id in scenes_to_process]
 
         with Pool(num_workers) as pool:
@@ -246,4 +247,5 @@ def main():
             print(f"    ... and {len(errors) - 10} more")
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
     main()

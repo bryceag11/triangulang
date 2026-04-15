@@ -35,6 +35,9 @@ from triangulang.evaluation.eval_lerf import _evaluate_lerf
 from triangulang.evaluation.eval_scannetpp import _evaluate_scannetpp
 from triangulang.evaluation.eval_datasets import _evaluate_uco3d, _evaluate_nvos, _evaluate_partimagenet
 from triangulang import BPE_PATH as _BPE_PATH
+import triangulang
+
+logger = triangulang.get_logger(__name__)
 
 
 def main():
@@ -51,6 +54,8 @@ def main():
     ddp = DDPManager()
     ddp.init(timeout_minutes=120)
 
+    triangulang.configure_logging(ddp.rank)
+
     random.seed(args.seed + ddp.rank)
     np.random.seed(args.seed + ddp.rank)
     torch.manual_seed(args.seed + ddp.rank)
@@ -58,7 +63,7 @@ def main():
     device = ddp.device if ddp.is_distributed else ('cuda' if torch.cuda.is_available() else 'cpu')
     torch.backends.cudnn.benchmark = True
 
-    ddp.print(f"Device: {device}" + (f" (DDP: {ddp.world_size} GPUs)" if ddp.is_distributed else ""))
+    logger.info(f"Device: {device}" + (f" (DDP: {ddp.world_size} GPUs)" if ddp.is_distributed else ""))
 
     # Output directory
     if args.run_name:
@@ -69,7 +74,7 @@ def main():
         ckpt_name = Path(args.checkpoint).parent.name
         run_name = f"eval_{ckpt_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-    if args.dataset in ('lerf_ovs', 'lerf_loc'):
+    if args.dataset == 'lerf_ovs':
         output_dir = PROJECT_ROOT / 'runs' / 'lerf' / run_name
     else:
         output_dir = PROJECT_ROOT / 'runs' / 'final' / run_name
@@ -79,7 +84,7 @@ def main():
     if args.visualize and ddp.is_main:
         viz_dir.mkdir(parents=True, exist_ok=True)
 
-    ddp.print(f"Output directory: {output_dir}")
+    logger.info(f"Output directory: {output_dir}")
 
     # Load model
     if args.baseline_sam3:
@@ -88,16 +93,16 @@ def main():
         if args.mask_size is None:
             args.mask_size = (args.image_size // 14) * 4
         sam3_res = math.ceil(args.image_size / 14) * 14
-        ddp.print(f"\nLoading baseline SAM3 (native decoder, no GASA/depth/cross-view)...")
-        ddp.print(f"  SAM3 img_size={sam3_res} (from --image-size {args.image_size})")
+        logger.info(f"Loading baseline SAM3 (native decoder, no GASA/depth/cross-view)...")
+        logger.info(f"  SAM3 img_size={sam3_res} (from --image-size {args.image_size})")
         sam3_model = build_sam3_image_model(bpe_path=_BPE_PATH, img_size=sam3_res).to(device)
         model = BaselineSAM3Wrapper(sam3_model, resolution=sam3_res)
         model.to(device)
         total_params, trainable_params = count_parameters(model)
         gasa_params = 0
-        ddp.print(f"\nBaseline SAM3 Parameters: {total_params/1e6:.2f}M")
+        logger.info(f"Baseline SAM3 Parameters: {total_params/1e6:.2f}M")
     else:
-        ddp.print(f"\nLoading model from {args.checkpoint}...")
+        logger.info(f"Loading model from {args.checkpoint}...")
         model = load_model(args.checkpoint, device, da3_resolution=args.da3_resolution,
                           num_queries=args.num_queries, skip_trained_seghead=args.skip_trained_seghead,
                           train_config_path=args.train_config, resolution=args.image_size)
@@ -106,7 +111,7 @@ def main():
             args.image_size = model.resolution
         if args.mask_size is None:
             args.mask_size = (args.image_size // 14) * 4
-        ddp.print(f"  image_size={args.image_size}, mask_size={args.mask_size}")
+        logger.info(f"  image_size={args.image_size}, mask_size={args.mask_size}")
 
         # Auto-enable spatial tokens if trained with them
         ckpt_dir = Path(args.checkpoint).parent
@@ -116,7 +121,7 @@ def main():
                 train_config = json.load(f)
             if train_config.get('use_spatial_tokens', False) and not args.spatial_eval and not args.no_spatial_eval:
                 args.spatial_eval = True
-                ddp.print(f"  Auto-enabled --spatial-eval")
+                logger.info(f"  Auto-enabled --spatial-eval")
             if args.no_spatial_eval:
                 args.spatial_eval = False
 
@@ -128,14 +133,14 @@ def main():
 
         total_params, trainable_params = count_parameters(model)
         gasa_params = sum(p.numel() for p in model.gasa_decoder.parameters())
-        ddp.print(f"\nParameters: {total_params/1e6:.2f}M total, {trainable_params/1e6:.2f}M trainable, {gasa_params/1e6:.2f}M GASA")
+        logger.info(f"Parameters: {total_params/1e6:.2f}M total, {trainable_params/1e6:.2f}M trainable, {gasa_params/1e6:.2f}M GASA")
 
     # Resolve data root
     if args.data_root is None:
         dataset_paths = {
             'scannetpp': 'data/scannetpp', 'uco3d': 'data/uco3d',
             'partimagenet': 'data/partimagenet/PartImageNet',
-            'lerf_ovs': 'data/lerf_ovs', 'lerf_loc': 'data/lerf_ovs',
+            'lerf_ovs': 'data/lerf_ovs',
             'nvos': 'data/nvos',
         }
         if args.dataset not in dataset_paths:
@@ -147,7 +152,7 @@ def main():
     if args.dataset == 'uco3d':
         _evaluate_uco3d(model, args, device, ddp, data_root, output_dir, viz_dir,
                         total_params, trainable_params, gasa_params)
-    elif args.dataset in ('lerf_ovs', 'lerf_loc'):
+    elif args.dataset == 'lerf_ovs':
         _evaluate_lerf(model, args, device, ddp, data_root, output_dir, viz_dir)
     elif args.dataset == 'nvos':
         _evaluate_nvos(model, args, device, ddp, data_root, output_dir, viz_dir)

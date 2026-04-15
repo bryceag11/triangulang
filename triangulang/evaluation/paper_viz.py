@@ -10,6 +10,9 @@ import matplotlib.patches as patches
 from pathlib import Path
 from typing import Dict, List, Optional
 from PIL import Image
+import triangulang
+
+logger = triangulang.get_logger(__name__)
 
 from triangulang.evaluation.visualization import MASK_COLORS, overlay_mask_sam3_style
 
@@ -162,7 +165,7 @@ def collect_paper_viz_from_results(
         target_lower = [t.lower() for t in target_objects]
         pool = [v for v in pool if v['label'].lower() in target_lower]
         if not pool:
-            print(f"  [paper-viz] Warning: no samples match target objects {target_objects}, using all")
+            logger.warning(f"  [paper-viz] No samples match target objects {target_objects}, using all")
             pool = viz_pool
 
     grid_sets = []
@@ -294,7 +297,7 @@ def generate_paper_visualizations(
         ddp_rank: If set, include rank in filenames to avoid conflicts.
     """
     if not viz_pool:
-        print("  [paper-viz] No visualization data collected, skipping.")
+        logger.info("  [paper-viz] No visualization data collected, skipping.")
         return
 
     paper_dir = output_dir / 'paper_viz'
@@ -314,9 +317,9 @@ def generate_paper_visualizations(
     if min_iou > 0:
         original_count = len(viz_pool)
         viz_pool = [v for v in viz_pool if v.get('iou', 0) >= min_iou]
-        print(f"  [paper-viz] IoU filter (>= {min_iou:.0%}): {original_count} → {len(viz_pool)} samples")
+        logger.debug(f"  [paper-viz] IoU filter (>= {min_iou:.0%}): {original_count} -> {len(viz_pool)} samples")
         if not viz_pool:
-            print(f"  [paper-viz] No samples above {min_iou:.0%} IoU threshold, skipping.")
+            logger.info(f"  [paper-viz] No samples above {min_iou:.0%} IoU threshold, skipping.")
             return
 
     grid_sets = collect_paper_viz_from_results(
@@ -325,7 +328,7 @@ def generate_paper_visualizations(
     )
 
     if not grid_sets:
-        print("  [paper-viz] Could not assemble any grid sets from collected data.")
+        logger.info("  [paper-viz] Could not assemble any grid sets from collected data.")
         return
 
     metadata = {
@@ -343,13 +346,13 @@ def generate_paper_visualizations(
 
     for set_idx, grid_rows in enumerate(grid_sets):
         # Print depth source info for debugging
-        print(f"  [paper-viz] Set {set_idx} rows:")
+        logger.debug(f"  [paper-viz] Set {set_idx} rows:")
         for row_idx, r in enumerate(grid_rows):
             depth_src = r.get('depth_source', 'unknown')
             frame = r.get('frame_name', 'unknown')
             label = r.get('label', '')
             scene = r.get('scene_id', '')
-            print(f"    Row {row_idx}: {scene}/{frame} '{label}' depth={depth_src}")
+            logger.debug(f"    Row {row_idx}: {scene}/{frame} '{label}' depth={depth_src}")
 
         fig = create_paper_grid(
             grid_rows, dpi=dpi, mask_color=mask_color, overlay_alpha=overlay_alpha,
@@ -362,7 +365,7 @@ def generate_paper_visualizations(
         fig_path = paper_dir / filename
         fig.savefig(fig_path, dpi=dpi, bbox_inches='tight', pad_inches=0.02)
         plt.close(fig)
-        print(f"  [paper-viz] Saved {fig_path} ({dpi} DPI)")
+        logger.info(f"  [paper-viz] Saved {fig_path} ({dpi} DPI)")
 
         set_meta = {
             'set_id': set_idx,
@@ -387,7 +390,7 @@ def generate_paper_visualizations(
         meta_path = paper_dir / 'paper_grid_metadata.json'
     with open(meta_path, 'w') as f:
         json.dump(metadata, f, indent=2)
-    print(f"  [paper-viz] Metadata saved to {meta_path}")
+    logger.info(f"  [paper-viz] Metadata saved to {meta_path}")
 
 
 def generate_single_object_viz(
@@ -411,7 +414,7 @@ def generate_single_object_viz(
         ddp_rank: If set, include rank in metadata/summary filenames to avoid conflicts.
     """
     if not viz_pool:
-        print("  [single-object-viz] No visualization data collected, skipping.")
+        logger.info("  [single-object-viz] No visualization data collected, skipping.")
         return
 
     viz_dir = output_dir / 'single_object_viz'
@@ -426,9 +429,9 @@ def generate_single_object_viz(
     if min_iou > 0:
         original_count = len(viz_pool)
         viz_pool = [v for v in viz_pool if v.get('iou', 0) >= min_iou]
-        print(f"  [single-object-viz] IoU filter (>= {min_iou:.0%}): {original_count} → {len(viz_pool)} samples")
+        logger.debug(f"  [single-object-viz] IoU filter (>= {min_iou:.0%}): {original_count} -> {len(viz_pool)} samples")
         if not viz_pool:
-            print(f"  [single-object-viz] No samples above {min_iou:.0%} IoU threshold, skipping.")
+            logger.info(f"  [single-object-viz] No samples above {min_iou:.0%} IoU threshold, skipping.")
             return
     dpi = getattr(args, 'paper_viz_dpi', 600)
     mask_color = getattr(args, 'paper_viz_mask_color', 'white')
@@ -438,7 +441,7 @@ def generate_single_object_viz(
     from collections import defaultdict
     scenes_in_pool = set(v.get('scene_id', 'unknown') for v in viz_pool)
     multi_scene = len(scenes_in_pool) > 1
-    print(f"  [single-object-viz] {len(viz_pool)} samples from {len(scenes_in_pool)} scene(s)")
+    logger.info(f"  [single-object-viz] {len(viz_pool)} samples from {len(scenes_in_pool)} scene(s)")
 
     # Group samples by scene, then by label
     by_scene = defaultdict(lambda: defaultdict(list))
@@ -458,13 +461,13 @@ def generate_single_object_viz(
 
     for scene_id in sorted(by_scene.keys()):
         by_label = by_scene[scene_id]
-        print(f"\n  [single-object-viz] Scene: {scene_id}")
+        logger.info(f"  [single-object-viz] Scene: {scene_id}")
 
         # Determine which objects to visualize for this scene
         if target_objects:
             objects_to_viz = [obj for obj in target_objects if obj in by_label]
             if not objects_to_viz:
-                print(f"    No target objects found, skipping scene")
+                logger.info(f"    No target objects found, skipping scene")
                 continue
         else:
             # Pick objects with BEST IoU for this scene
@@ -475,7 +478,7 @@ def generate_single_object_viz(
             sorted_labels = sorted(label_best_iou.keys(), key=lambda l: label_best_iou[l], reverse=True)
             objects_to_viz = sorted_labels[:num_objects]
 
-        print(f"    Visualizing {len(objects_to_viz)} objects, top-{topk} IoU frames each:")
+        logger.info(f"    Visualizing {len(objects_to_viz)} objects, top-{topk} IoU frames each:")
 
         # Collect rows for this scene
         scene_rows = []
@@ -489,7 +492,7 @@ def generate_single_object_viz(
             samples_sorted = sorted(samples, key=lambda x: x.get('iou', 0), reverse=True)
             top_samples = samples_sorted[:topk]
 
-            print(f"      {obj_label}: {len(samples)} total, top {len(top_samples)}")
+            logger.debug(f"      {obj_label}: {len(samples)} total, top {len(top_samples)}")
 
             obj_meta = {
                 'label': obj_label,
@@ -524,7 +527,7 @@ def generate_single_object_viz(
                 separate_dir = viz_dir / 'separate'
             separate_dir.mkdir(parents=True, exist_ok=True)
 
-            print(f"    Saving {len(scene_rows)} samples to: {separate_dir}")
+            logger.info(f"    Saving {len(scene_rows)} samples to: {separate_dir}")
 
             for idx, sample in enumerate(scene_rows):
                 label = sample.get('label', 'unknown').replace(' ', '_').replace('/', '_')
@@ -580,7 +583,7 @@ def generate_single_object_viz(
         fig = create_paper_grid(scene_rows, dpi=dpi, mask_color=mask_color, overlay_alpha=overlay_alpha)
         fig.savefig(grid_path, dpi=dpi, bbox_inches='tight', pad_inches=0.02)
         plt.close(fig)
-        print(f"    Saved grid: {grid_path}")
+        logger.info(f"    Saved grid: {grid_path}")
 
     # Save detailed metadata JSON
     # Include rank in filename if running distributed to avoid conflicts
@@ -590,7 +593,7 @@ def generate_single_object_viz(
         meta_path = viz_dir / 'metadata.json'
     with open(meta_path, 'w') as f:
         json.dump(all_metadata, f, indent=2)
-    print(f"\n  [single-object-viz] Saved metadata: {meta_path}")
+    logger.info(f"  [single-object-viz] Saved metadata: {meta_path}")
 
     # Also save a summary table
     summary_lines = [
@@ -620,4 +623,4 @@ def generate_single_object_viz(
         summary_path = viz_dir / 'summary.txt'
     with open(summary_path, 'w') as f:
         f.write('\n'.join(summary_lines))
-    print(f"  [single-object-viz] Saved summary: {summary_path}")
+    logger.info(f"  [single-object-viz] Saved summary: {summary_path}")

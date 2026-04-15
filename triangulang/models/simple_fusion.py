@@ -107,11 +107,11 @@ class SimpleFusionHead(nn.Module):
 
 class CrossAttentionFusionHead(nn.Module):
     """
-    Bidirectional cross-attention fusion: depth ↔ SAM3 features
+    Bidirectional cross-attention fusion: depth <-> SAM3 features
 
     Key insight: Both modalities must be preserved in the output.
-    - Depth→SAM attention: depth learns what semantic regions are important
-    - SAM→Depth attention: semantics learn where in 3D space to focus
+    - Depth->SAM attention: depth learns what semantic regions are important
+    - SAM->Depth attention: semantics learn where in 3D space to focus
     - Final output combines both attended features + originals
     """
 
@@ -138,7 +138,7 @@ class CrossAttentionFusionHead(nn.Module):
             nn.ReLU(inplace=True),
         )
 
-        # Bidirectional cross-attention (depth→SAM and SAM→depth)
+        # Bidirectional cross-attention (depth->SAM and SAM->depth)
         self.depth_to_sam_attn = nn.MultiheadAttention(
             hidden_dim, num_heads, dropout=0.1, batch_first=True
         )

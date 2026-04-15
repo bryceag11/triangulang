@@ -11,10 +11,13 @@ Usage:
 
 import argparse
 import json
+import logging
 import sys
 import time
 from collections import defaultdict
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 import cv2
 import numpy as np
@@ -165,7 +168,7 @@ def load_scene_objects(scene_path, semantics_dir):
     # Load object labels from annotation
     anno_path = scene_path / "scans" / "segments_anno.json"
     if not anno_path.exists():
-        print(f"  No segments_anno.json in {scene_path}")
+        logger.warning(f"  No segments_anno.json in {scene_path}")
         return {}
 
     with open(anno_path) as f:
@@ -185,7 +188,7 @@ def load_scene_objects(scene_path, semantics_dir):
 
     pth_files = sorted(sem_path.glob("*.pth"))
     if not pth_files:
-        print(f"  No .pth files in {sem_path}")
+        logger.warning(f"  No .pth files in {sem_path}")
         return {}
 
     # Sample a few frames to find visible objects
@@ -218,13 +221,13 @@ def load_gt_masks_for_frame(semantics_dir, frame_name):
     import numpy as np
 
     sem_path = Path(semantics_dir)
-    # frame_name may be 'DSC02798.JPG' — pth is 'DSC02798.JPG.pth'
+    # frame_name may be 'DSC02798.JPG': pth is 'DSC02798.JPG.pth'
     for candidate in [f"{frame_name}.pth", f"{Path(frame_name).stem}.pth"]:
         pth_path = sem_path / candidate
         if pth_path.exists():
             data = torch.load(pth_path, map_location='cpu', weights_only=False)
             if isinstance(data, np.ndarray):
-                # Per-pixel object ID map → per-object binary masks
+                # Per-pixel object ID map -> per-object binary masks
                 masks = {}
                 for obj_id in np.unique(data):
                     if obj_id <= 0:
@@ -296,16 +299,16 @@ def main():
         frames = frames[::args.stride]
     if args.max_frames > 0:
         frames = frames[:args.max_frames]
-    print(f"Scene: {scene_id}, {len(frames)} frames (stride={args.stride})")
+    logger.info(f"Scene: {scene_id}, {len(frames)} frames (stride={args.stride})")
 
     # Initialize CUDA before model loading (SAM3 hardcodes device="cuda" in position encoding)
     if device != 'cpu':
         torch.cuda.init()
         torch.zeros(1, device=device)
-        print(f"  CUDA initialized: {torch.cuda.get_device_name(0)}")
+        logger.info(f"  CUDA initialized: {torch.cuda.get_device_name(0)}")
 
     # Load model
-    print(f"Loading model from {args.checkpoint}...")
+    logger.info(f"Loading model from {args.checkpoint}...")
     from triangulang.evaluation.benchmark import load_model
     model = load_model(args.checkpoint, device, da3_resolution=args.image_size,
                        resolution=args.image_size)
@@ -313,22 +316,22 @@ def main():
 
     image_size = (args.image_size, args.image_size)
     sam3_mo = getattr(model, 'sam3_multi_object', False)
-    print(f"  SAM3 multi-object mode: {'ON' if sam3_mo else 'OFF'}")
+    logger.info(f"  SAM3 multi-object mode: {'ON' if sam3_mo else 'OFF'}")
 
     # Discover objects
     if args.objects:
         object_labels = {label: [] for label in args.objects}
-        print(f"Using specified objects: {args.objects}")
+        logger.info(f"Using specified objects: {args.objects}")
     elif semantics_dir:
         object_labels = load_scene_objects(scene_path, semantics_dir)
-        print(f"Found {len(object_labels)} object categories in GT")
+        logger.info(f"Found {len(object_labels)} object categories in GT")
     else:
-        print("ERROR: No --objects specified and no GT semantics found. Pass --objects.")
+        logger.warning("No --objects specified and no GT semantics found. Pass --objects.")
         return
 
     # Limit objects
     label_list = list(object_labels.keys())[:args.max_objects]
-    print(f"Tracking {len(label_list)} objects: {label_list}")
+    logger.info(f"Tracking {len(label_list)} objects: {label_list}")
 
     # Assign colors
     label_colors = {label: OBJECT_COLORS[i % len(OBJECT_COLORS)]
@@ -342,16 +345,16 @@ def main():
             da3_cache_dir = candidate
             break
     if da3_cache_dir:
-        print(f"DA3 cache: {da3_cache_dir}")
+        logger.info(f"DA3 cache: {da3_cache_dir}")
 
     # Temporal smoothing state (per-label EMA of mask logits)
     prev_logits = {}  # label -> tensor [H, W] on CPU
     alpha = args.smooth_alpha
     if alpha < 1.0:
-        print(f"Temporal smoothing: alpha={alpha:.2f} (0=full smooth, 1=no smooth)")
+        logger.info(f"Temporal smoothing: alpha={alpha:.2f} (0=full smooth, 1=no smooth)")
 
     # Process frames
-    print(f"Processing {len(frames)} frames...")
+    logger.info(f"Processing {len(frames)} frames...")
     processed_frames = []
 
     for fidx, frame_path in enumerate(frames):
@@ -401,9 +404,9 @@ def main():
             all_masks = outputs['all_masks'][0]  # [Q, H, W]
             text_scores = outputs.get('text_scores')
             if text_scores is not None and text_scores.dim() == 3:
-                scores = text_scores[0, :, 0]  # [B, Q, K] → [Q]
+                scores = text_scores[0, :, 0]  # [B, Q, K] -> [Q]
             elif text_scores is not None and text_scores.dim() == 2:
-                scores = text_scores[0]  # [B, Q] → [Q]
+                scores = text_scores[0]  # [B, Q] -> [Q]
             else:
                 scores = all_masks.mean(dim=(1, 2))  # fallback: mean logit
             best_q = scores.argmax()
@@ -479,12 +482,12 @@ def main():
 
         elapsed = time.perf_counter() - t0
         if (fidx + 1) % 10 == 0 or fidx == 0:
-            print(f"  [{fidx+1}/{len(frames)}] {n_detected}/{len(label_list)} objects detected, "
+            logger.info(f"  [{fidx+1}/{len(frames)}] {n_detected}/{len(label_list)} objects detected, "
                   f"{elapsed:.2f}s/frame")
 
     # Write video
     if not processed_frames:
-        print("ERROR: No frames processed.")
+        logger.warning("No frames processed.")
         return
 
     sample = processed_frames[0]
@@ -518,13 +521,14 @@ def main():
             str(tmp_out)
         ], capture_output=True, check=True)
         tmp_out.rename(ffmpeg_out)
-        print(f"Re-encoded with H.264: {ffmpeg_out}")
+        logger.info(f"Re-encoded with H.264: {ffmpeg_out}")
     except (subprocess.CalledProcessError, FileNotFoundError):
-        print(f"(ffmpeg not available, using mp4v codec)")
+        logger.info(f"(ffmpeg not available, using mp4v codec)")
 
     duration = len(processed_frames) / args.fps
     print(f"\nSaved: {output_path}")
     print(f"  {len(processed_frames)} frames, {args.fps} FPS, {out_w}x{out_h}, {duration:.1f}s")
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
     main()

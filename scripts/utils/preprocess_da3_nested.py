@@ -11,6 +11,7 @@ Usage:
 
 import argparse
 import json
+import logging
 import os
 import sys
 import time
@@ -22,6 +23,8 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -97,7 +100,7 @@ def ensure_transforms_undistorted(scene_path: Path) -> bool:
         return True
 
     except Exception as e:
-        print(f"  Warning: Could not generate transforms_undistorted.json: {e}")
+        logger.warning(f"  Could not generate transforms_undistorted.json: {e}")
         return False
 
 def load_gt_poses(scene_path: Path) -> dict:
@@ -177,7 +180,7 @@ def load_scene_list(data_root: Path, split: str) -> list:
                 break
 
     if not split_file.exists():
-        print(f"Warning: Split file not found: {split_file}")
+        logger.warning(f"Split file not found: {split_file}")
         return []
 
     scenes = []
@@ -425,25 +428,24 @@ def main():
     is_main = (local_rank == 0)
 
     if is_main:
-        print(f"Preprocessing DA3-NESTED depth + poses for ScanNet++")
-        print(f"  Data root: {args.data_root}")
-        print(f"  Cache name: {args.cache_name}")
-        print(f"  Split: {args.split}")
-        print(f"  DA3 model: {args.da3_model}")
-        print(f"  Resolution: {args.resolution}")
-        print(f"  Chunk size: {args.chunk_size} views (cross-view attention window)")
-        print(f"  Overlap: {args.overlap} frames between chunks")
-        print(f"  Only save GT frames: {args.only_with_gt}")
-        print(f"  Procrustes check: {args.procrustes} (threshold: {args.procrustes_threshold}cm)")
-        print(f"  World size: {world_size} GPUs")
-        print()
+        logger.info(f"Preprocessing DA3-NESTED depth + poses for ScanNet++")
+        logger.info(f"  Data root: {args.data_root}")
+        logger.info(f"  Cache name: {args.cache_name}")
+        logger.info(f"  Split: {args.split}")
+        logger.info(f"  DA3 model: {args.da3_model}")
+        logger.info(f"  Resolution: {args.resolution}")
+        logger.info(f"  Chunk size: {args.chunk_size} views (cross-view attention window)")
+        logger.info(f"  Overlap: {args.overlap} frames between chunks")
+        logger.info(f"  Only save GT frames: {args.only_with_gt}")
+        logger.info(f"  Procrustes check: {args.procrustes} (threshold: {args.procrustes_threshold}cm)")
+        logger.info(f"  World size: {world_size} GPUs")
 
     # Load DA3 model (skip for --procrustes-only)
     da3 = None
     input_processor = None
     if not args.procrustes_only:
         if is_main:
-            print(f"Loading DA3 model (this may take a moment for 1.4B params)...")
+            logger.info(f"Loading DA3 model (this may take a moment for 1.4B params)...")
 
         from depth_anything_3.api import DepthAnything3
         da3 = DepthAnything3.from_pretrained(args.da3_model).to(device)
@@ -454,12 +456,10 @@ def main():
         input_processor = InputProcessor()
 
         if is_main:
-            print(f"  DA3 loaded successfully")
-            print()
+            logger.info(f"  DA3 loaded successfully")
     else:
         if is_main:
-            print(f"[Procrustes-only mode] Skipping DA3 model loading")
-            print()
+            logger.info(f"[Procrustes-only mode] Skipping DA3 model loading")
 
     # Get scene list
     data_root = Path(args.data_root)
@@ -481,7 +481,7 @@ def main():
         scenes = scenes[:args.max_scenes]
 
     if is_main:
-        print(f"Found {len(scenes)} scenes with images")
+        logger.info(f"Found {len(scenes)} scenes with images")
 
     # Create cache directory
     cache_dir = data_root / args.cache_name
@@ -512,7 +512,7 @@ def main():
                     pass
             else:
                 if is_main:
-                    print(f"  Warning: {scene_id} - cannot generate transforms_undistorted.json, skipping Procrustes")
+                    logger.warning(f"  {scene_id} - cannot generate transforms_undistorted.json, skipping Procrustes")
 
         gt_frames = get_frames_with_gt_masks(data_root, scene_id, args.split)
         if args.only_with_gt and not gt_frames:
@@ -561,20 +561,19 @@ def main():
         total_all_frames += len(all_img_paths)
 
     if is_main:
-        print(f"  Scenes to process: {len(scene_data)}")
-        print(f"  GT frames to save: {total_gt_frames}")
-        print(f"  Total frames in chunks (for context): {total_all_frames}")
+        logger.info(f"  Scenes to process: {len(scene_data)}")
+        logger.info(f"  GT frames to save: {total_gt_frames}")
+        logger.info(f"  Total frames in chunks (for context): {total_all_frames}")
         if args.procrustes:
             n_with_gt_poses = sum(1 for sd in scene_data.values() if sd['gt_poses'])
-            print(f"  Scenes with GT poses (for Procrustes): {n_with_gt_poses}/{len(scene_data)}")
-        print()
+            logger.info(f"  Scenes with GT poses (for Procrustes): {n_with_gt_poses}/{len(scene_data)}")
 
     # Distribute scenes across GPUs
     scene_list = list(scene_data.keys())
     my_scenes = scene_list[local_rank::world_size]
 
     my_gt_count = sum(len(scene_data[s]['gt_to_process']) for s in my_scenes)
-    print(f"[Rank {local_rank}] Processing {len(my_scenes)} scenes, {my_gt_count} GT frames")
+    logger.info(f"[Rank {local_rank}] Processing {len(my_scenes)} scenes, {my_gt_count} GT frames")
 
     # Process each scene
     chunk_size = args.chunk_size
@@ -707,7 +706,7 @@ def main():
                     img.close()
 
             except Exception as e:
-                print(f"\n[Rank {local_rank}] Error processing chunk {chunk_idx} "
+                logger.warning(f"[Rank {local_rank}] Error processing chunk {chunk_idx} "
                       f"in {scene_id}: {e}")
                 import traceback
                 traceback.print_exc()
@@ -927,4 +926,5 @@ def main():
         print()
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
     main()

@@ -200,10 +200,10 @@ class GASADecoder(nn.Module):
 
         # TEXT SCORING HEAD: SAM3-style DotProductScoring for text-aware mask selection
         # Replicates SAM3's _create_dot_product_scoring() architecture:
-        #   prompt_mlp: 2-layer MLP (256→2048→256) with residual + LayerNorm
-        #   prompt_proj: Linear(256→256) for projected text
-        #   hs_proj: Linear(256→256) for projected queries
-        # Order: MLP → mean_pool → project → dot product (matching SAM3)
+        #   prompt_mlp: 2-layer MLP (256->2048->256) with residual + LayerNorm
+        #   prompt_proj: Linear(256->256) for projected text
+        #   hs_proj: Linear(256->256) for projected queries
+        # Order: MLP -> mean_pool -> project -> dot product (matching SAM3)
         self.scoring_prompt_mlp = SAM3MLP(
             input_dim=d_model, hidden_dim=2048, output_dim=d_model,
             num_layers=2, dropout=0.1, residual=True,
@@ -657,7 +657,7 @@ class GASADecoder(nn.Module):
         # We compute w2c here and pass rayrope module + camera params through to layers.
         rayrope_ctx = None  # Will be set for rayrope PE type
         if self.pe_type == 'rayrope' and self.rayrope is not None:
-            memory_with_pe = memory  # No additive PE — RoPE handles it in attention
+            memory_with_pe = memory  # No additive PE: RoPE handles it in attention
             if num_cameras > 1 and poses_per_view is not None and intrinsics_per_view is not None:
                 # Cross-view mode: per-camera RayRoPE attention
                 w2c_per_view = torch.linalg.inv(poses_per_view)  # [B, N, 4, 4]
@@ -724,7 +724,7 @@ class GASADecoder(nn.Module):
             # SAM3-style: memory stays clean, PE added fresh to K each layer
             layer_memory = memory       # Clean visual features
             layer_memory_pe = memory_pe  # PE added to K at attention time
-            memory_v = None              # Not needed — V uses clean memory automatically
+            memory_v = None              # Not needed: V uses clean memory automatically
         else:
             # Legacy: PE baked into memory
             layer_memory = memory_with_pe
@@ -734,7 +734,7 @@ class GASADecoder(nn.Module):
         query_pos = memory_pos.mean(dim=1, keepdim=True).expand(-1, Q, -1).clone()
 
         # Query PE: learned positional embedding for queries (SAM3-style)
-        # Same embedding added at every layer — gives queries persistent identity
+        # Same embedding added at every layer: gives queries persistent identity
         query_pe = None
         if self.use_query_pe:
             query_pe = self.query_pe_embed.weight[:Q].unsqueeze(0).expand(B, -1, -1)
@@ -866,7 +866,7 @@ class GASADecoder(nn.Module):
             iou_pred = self.iou_head(queries).squeeze(-1)  # [B, Q]
 
         # TEXT SCORING: SAM3-style dot-product scoring for text-aware mask selection
-        # Order matches SAM3: MLP → mean_pool → project → dot product with projected queries
+        # Order matches SAM3: MLP -> mean_pool -> project -> dot product with projected queries
         # IMPORTANT: Use raw text_embedding (256-dim from VETextEncoder), NOT text_proj_for_layers.
         # SAM3's DotProductScoring.prompt_mlp receives raw text tokens directly.
         # text_proj is only for cross-attention conditioning, not for scoring.
@@ -877,7 +877,7 @@ class GASADecoder(nn.Module):
             proj_queries = self.scoring_hs_proj(queries)  # [B, Q, D]
 
             if num_texts > 1 and tokens_per_text is not None:
-                # MULTI-OBJECT: Per-text pooling → [B, Q, K] scores
+                # MULTI-OBJECT: Per-text pooling -> [B, Q, K] scores
                 K = num_texts
                 T_per = tokens_per_text
                 D = text_processed.shape[-1]
@@ -889,7 +889,7 @@ class GASADecoder(nn.Module):
                 text_scores = text_scores * self.scoring_scale
                 text_scores = text_scores.clamp(-12.0, 12.0)
             else:
-                # SINGLE-OBJECT: Global pool → [B, Q] scores (original behavior)
+                # SINGLE-OBJECT: Global pool -> [B, Q] scores (original behavior)
                 pooled_text = text_processed.mean(dim=1)  # [B, D]
                 proj_text = self.scoring_prompt_proj(pooled_text)  # [B, D]
                 text_scores = torch.matmul(proj_queries, proj_text.unsqueeze(-1)).squeeze(-1)  # [B, Q]

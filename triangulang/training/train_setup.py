@@ -36,6 +36,9 @@ from triangulang.utils.metrics import CategoryMetricsTracker
 from triangulang.data.dataset_factory import get_dataset, get_dataset_config
 from triangulang.utils.scannetpp_loader import ScanNetPPMultiViewDataset
 
+import triangulang
+logger = triangulang.get_logger(__name__)
+
 
 def _setup_config(args):
     parser_defaults = TrainConfig.get_parser_defaults()
@@ -59,9 +62,9 @@ def _setup_config(args):
                 setattr(args, key, value)
                 sam3_applied.append(f"{key}={value}")
         if sam3_applied:
-            print(f"[--sam3-defaults] Applied: {', '.join(sam3_applied)}")
+            logger.debug(f"[--sam3-defaults] Applied: {', '.join(sam3_applied)}")
         else:
-            print(f"[--sam3-defaults] All SAM3 settings already active or overridden by CLI")
+            logger.debug(f"[--sam3-defaults] All SAM3 settings already active or overridden by CLI")
 
     if args.pe_type == 'none':
         args.use_world_pe = False
@@ -114,17 +117,17 @@ def _setup_config(args):
                         setattr(args, key, old_default)
                         compat_applied.append(f"{key}={old_default}")
 
-            print(f"[Resume] Loaded config from {config_path}")
+            logger.info(f"[Resume] Loaded config from {config_path}")
             if compat_applied:
-                print(f"[Resume]   Backward compat (old config missing keys): {', '.join(compat_applied)}")
+                logger.debug(f"[Resume]   Backward compat (old config missing keys): {', '.join(compat_applied)}")
             if loaded:
-                print(f"[Resume]   Restored {len(loaded)} settings: {', '.join(loaded[:10])}" +
+                logger.debug(f"[Resume]   Restored {len(loaded)} settings: {', '.join(loaded[:10])}" +
                       (f"... and {len(loaded)-10} more" if len(loaded) > 10 else ""))
             if overridden:
-                print(f"[Resume]   CLI overrides: {', '.join(overridden)}")
+                logger.info(f"[Resume]   CLI overrides: {', '.join(overridden)}")
         else:
-            print(f"[Resume] Warning: No config.json found for run '{run_name}', using CLI args only")
-            print(f"[Resume]   Searched: {[str(p) for p in possible_config_paths]}")
+            logger.info(f"[Resume] Warning: No config.json found for run '{run_name}', using CLI args only")
+            logger.debug(f"[Resume]   Searched: {[str(p) for p in possible_config_paths]}")
 
     return args
 
@@ -137,70 +140,69 @@ def _init_environment(args, ddp):
     device = ddp.device
     torch.backends.cudnn.benchmark = True
 
-    ddp.print("TRIANGULANG: GASA DECODER (REPLACES SAM3's DECODER)")
-    ddp.print(f"  World size: {ddp.world_size}, Rank: {ddp.rank}")
+    logger.info(f"TRIANGULANG: GASA DECODER | World size: {ddp.world_size}, Rank: {ddp.rank}")
 
     da3_name = args.da3_model.split('/')[-1].upper()
     da3_has_pose = 'METRIC' not in da3_name and 'MONO' not in da3_name
     da3_has_metric = 'METRIC' in da3_name or 'NESTED' in da3_name
-    ddp.print(f"  DA3 model: {da3_name}")
-    ddp.print(f"    - Pose estimation capability: {da3_has_pose}")
-    ddp.print(f"    - Metric depth: {da3_has_metric}")
-    ddp.print(f"    - NOTE: Will use GT poses from dataset if available, otherwise identity pose")
+    logger.debug(f"  DA3 model: {da3_name}")
+    logger.debug(f"    - Pose estimation capability: {da3_has_pose}")
+    logger.debug(f"    - Metric depth: {da3_has_metric}")
+    logger.debug(f"    - NOTE: Will use GT poses from dataset if available, otherwise identity pose")
     if args.use_sheaf_loss:
-        ddp.print(f"  Sheaf loss: enabled (weight={args.sheaf_weight}, type={args.sheaf_type})")
+        logger.debug(f"  Sheaf loss: enabled (weight={args.sheaf_weight}, type={args.sheaf_type})")
         if args.sheaf_type == 'feature':
-            ddp.print(f"    - NON-CONSTANT sheaf: learned restriction maps on R^256 -> R^{args.sheaf_d_edge}")
+            logger.debug(f"    - NON-CONSTANT sheaf: learned restriction maps on R^256 -> R^{args.sheaf_d_edge}")
         else:
-            ddp.print(f"    - Constant sheaf: identity restriction maps")
-        ddp.print(f"    - Requires GT extrinsics from dataset for world-consistent pointmaps")
-        ddp.print(f"    - If GT poses unavailable, falls back to camera-frame (less effective)")
+            logger.debug(f"    - Constant sheaf: identity restriction maps")
+        logger.debug(f"    - Requires GT extrinsics from dataset for world-consistent pointmaps")
+        logger.debug(f"    - If GT poses unavailable, falls back to camera-frame (less effective)")
 
-    ddp.print(f"  GASA (geometric bias): {args.use_gasa}" + (" [ABLATION: disabled]" if not args.use_gasa else ""))
+    logger.debug(f"  GASA (geometric bias): {args.use_gasa}" + (" [ABLATION: disabled]" if not args.use_gasa else ""))
     if args.use_gt_poses_for_gasa:
-        ddp.print(f"  GASA pointmaps: GT COLMAP poses (globally consistent)")
+        logger.debug(f"  GASA pointmaps: GT COLMAP poses (globally consistent)")
     elif args.use_da3_poses_for_gasa:
-        ddp.print(f"  GASA pointmaps: DA3-NESTED estimated poses (chunk-consistent)")
+        logger.debug(f"  GASA pointmaps: DA3-NESTED estimated poses (chunk-consistent)")
     else:
-        ddp.print(f"  GASA pointmaps: camera-frame (identity pose) [WARNING: no cross-view consistency]")
+        logger.debug(f"  GASA pointmaps: camera-frame (identity pose) [WARNING: no cross-view consistency]")
     kernel_desc = {'learned': f'learned MLP (dim={args.gasa_kernel_dim})', 'rbf': 'RBF exp(-d²/2σ²)', 'fixed': 'fixed φ(d) = -d'}
     bidir_str = " [BIDIRECTIONAL: boost+suppress]" if args.gasa_bidirectional else " [suppress-only]"
-    ddp.print(f"  GASA kernel: {kernel_desc.get(args.gasa_kernel_type, args.gasa_kernel_type)}{bidir_str}")
-    ddp.print(f"  Text proj: Linear(256→{args.d_model}) for cross-attention only (scoring uses raw text)")
+    logger.debug(f"  GASA kernel: {kernel_desc.get(args.gasa_kernel_type, args.gasa_kernel_type)}{bidir_str}")
+    logger.debug(f"  Text proj: Linear(256->{args.d_model}) for cross-attention only (scoring uses raw text)")
     if args.pred_logits_source == 'text_scoring':
         sel_str = " (text-aware scoring, eval-only selection)"
     else:
         sel_str = " (text-agnostic mask mean)"
-    ddp.print(f"  pred_logits source: {args.pred_logits_source}{sel_str}")
-    ddp.print(f"  Depth cross-attention: {args.use_depth_crossattn}" + (" (queries attend to 3D positions)" if args.use_depth_crossattn else ""))
-    ddp.print(f"  Iterative query positions: {args.use_iterative_pos}" + (" (P_Q = attn-weighted centroid)" if args.use_iterative_pos else " (P_Q = scene centroid)"))
-    ddp.print(f"  Positional encoding: {args.pe_type}" + (" [ABLATION: disabled]" if args.pe_type == 'none' else ""))
-    ddp.print(f"  Presence token: {args.use_presence_token} (weight={args.presence_weight}, focal={args.presence_focal}, α={args.presence_alpha}, γ={args.presence_gamma})")
+    logger.debug(f"  pred_logits source: {args.pred_logits_source}{sel_str}")
+    logger.debug(f"  Depth cross-attention: {args.use_depth_crossattn}" + (" (queries attend to 3D positions)" if args.use_depth_crossattn else ""))
+    logger.debug(f"  Iterative query positions: {args.use_iterative_pos}" + (" (P_Q = attn-weighted centroid)" if args.use_iterative_pos else " (P_Q = scene centroid)"))
+    logger.debug(f"  Positional encoding: {args.pe_type}" + (" [ABLATION: disabled]" if args.pe_type == 'none' else ""))
+    logger.debug(f"  Presence token: {args.use_presence_token} (weight={args.presence_weight}, focal={args.presence_focal}, alpha={args.presence_alpha}, gamma={args.presence_gamma})")
     centroid_mode = " [triangulation]" if args.use_triangulation else (" [mask-based]" if args.mask_based_centroid else " [attention-based]")
-    ddp.print(f"  Centroid head: {args.use_centroid_head}" + (f" (weight={args.centroid_weight}){centroid_mode}" if args.use_centroid_head else ""))
+    logger.debug(f"  Centroid head: {args.use_centroid_head}" + (f" (weight={args.centroid_weight}){centroid_mode}" if args.use_centroid_head else ""))
     if args.eval_localization and not args.use_centroid_head:
-        ddp.print(f"  Eval localization: {args.eval_localization} (tracking Acc@m from mask+depth, no loss)")
-    ddp.print(f"  Box prompts: {args.use_box_prompts}" + (f" (dropout={args.box_prompt_dropout})" if args.box_prompt_dropout > 0 else ""))
-    ddp.print(f"  Point prompts: {args.use_point_prompts} ({args.num_pos_points} pos + {args.num_neg_points} neg)" + (f" (dropout={args.point_prompt_dropout})" if args.point_prompt_dropout > 0 else ""))
-    ddp.print(f"  Prompt type: {args.prompt_type}")
-    ddp.print(f"  Mask selection: {args.mask_selection}")
+        logger.debug(f"  Eval localization: {args.eval_localization} (tracking Acc@m from mask+depth, no loss)")
+    logger.debug(f"  Box prompts: {args.use_box_prompts}" + (f" (dropout={args.box_prompt_dropout})" if args.box_prompt_dropout > 0 else ""))
+    logger.debug(f"  Point prompts: {args.use_point_prompts} ({args.num_pos_points} pos + {args.num_neg_points} neg)" + (f" (dropout={args.point_prompt_dropout})" if args.point_prompt_dropout > 0 else ""))
+    logger.debug(f"  Prompt type: {args.prompt_type}")
+    logger.debug(f"  Mask selection: {args.mask_selection}")
     if args.mask_selection == 'predicted_iou' and not args.use_iou_head:
-        ddp.print("  WARNING: --mask-selection predicted_iou requires --use-iou-head! Falling back to confidence.")
+        logger.info("  WARNING: --mask-selection predicted_iou requires --use-iou-head! Falling back to confidence.")
         args.mask_selection = 'confidence'
-    ddp.print(f"  Sheaf consistency loss: {args.use_sheaf_loss}" + (f" (type={args.sheaf_type}, weight={args.sheaf_weight}, threshold={args.sheaf_threshold}m)" if args.use_sheaf_loss else " [ABLATION: disabled]"))
-    ddp.print(f"  Contrastive loss: {args.contrastive_weight > 0}" + (f" (weight={args.contrastive_weight}, margin={args.contrastive_margin}, source={args.contrastive_source})" if args.contrastive_weight > 0 else ""))
-    ddp.print(f"  Align loss (SAM3-style): {args.align_weight > 0}" + (f" (weight={args.align_weight}, α={args.align_alpha}, γ={args.align_gamma}, τ={args.align_tau})" if args.align_weight > 0 else ""))
-    ddp.print(f"  Lovász loss: {args.lovasz_weight > 0}" + (f" (weight={args.lovasz_weight})" if args.lovasz_weight > 0 else ""))
-    ddp.print(f"  Point sampling: {args.use_point_sampling}" + (f" ({args.num_sample_points} points)" if args.use_point_sampling else ""))
-    ddp.print(f"  Loss at native res: {args.loss_at_native_res}")
-    ddp.print(f"  IoU head: {args.use_iou_head}" + (f" (MSE weight={args.iou_head_weight})" if args.use_iou_head else ""))
-    ddp.print(f"  Semantic union GT: {args.semantic_union}" + (" (text='mug' matches ALL mugs)" if args.semantic_union else " [per-instance mode]"))
-    ddp.print(f"  Class-balanced sampling: {args.class_balanced}" + (f" (power={args.class_balance_power})" if args.class_balanced else ""))
+    logger.debug(f"  Sheaf consistency loss: {args.use_sheaf_loss}" + (f" (type={args.sheaf_type}, weight={args.sheaf_weight}, threshold={args.sheaf_threshold}m)" if args.use_sheaf_loss else " [ABLATION: disabled]"))
+    logger.debug(f"  Contrastive loss: {args.contrastive_weight > 0}" + (f" (weight={args.contrastive_weight}, margin={args.contrastive_margin}, source={args.contrastive_source})" if args.contrastive_weight > 0 else ""))
+    logger.debug(f"  Align loss (SAM3-style): {args.align_weight > 0}" + (f" (weight={args.align_weight}, alpha={args.align_alpha}, gamma={args.align_gamma}, tau={args.align_tau})" if args.align_weight > 0 else ""))
+    logger.debug(f"  Lovasz loss: {args.lovasz_weight > 0}" + (f" (weight={args.lovasz_weight})" if args.lovasz_weight > 0 else ""))
+    logger.debug(f"  Point sampling: {args.use_point_sampling}" + (f" ({args.num_sample_points} points)" if args.use_point_sampling else ""))
+    logger.debug(f"  Loss at native res: {args.loss_at_native_res}")
+    logger.debug(f"  IoU head: {args.use_iou_head}" + (f" (MSE weight={args.iou_head_weight})" if args.use_iou_head else ""))
+    logger.debug(f"  Semantic union GT: {args.semantic_union}" + (" (text='mug' matches ALL mugs)" if args.semantic_union else " [per-instance mode]"))
+    logger.debug(f"  Class-balanced sampling: {args.class_balanced}" + (f" (power={args.class_balance_power})" if args.class_balanced else ""))
     if args.min_mask_coverage > 0:
         orig_pixels = int(args.min_mask_coverage * 1752 * 1168)
-        ddp.print(f"  Min mask coverage: {args.min_mask_coverage*100:.2f}% (≈{orig_pixels} pixels at ~1752×1168 original)")
+        logger.debug(f"  Min mask coverage: {args.min_mask_coverage*100:.2f}% (approx {orig_pixels} pixels at ~1752x1168 original)")
     else:
-        ddp.print(f"  Min mask coverage: disabled (any non-empty mask is valid)")
+        logger.debug(f"  Min mask coverage: disabled (any non-empty mask is valid)")
 
     return device
 
@@ -211,12 +213,12 @@ def _load_datasets(args, ddp):
     data_root = args.data_root or str(PROJECT_ROOT / dataset_config.get('data_root', f'data/{args.dataset}'))
     split = args.split or dataset_config.get('split', 'train')
 
-    ddp.print(f"\nLoading dataset '{args.dataset}'...")
-    ddp.print(f"  Data root: {data_root}")
-    ddp.print(f"  Split: {split}")
+    logger.info(f"Loading dataset '{args.dataset}'...")
+    logger.debug(f"  Data root: {data_root}")
+    logger.debug(f"  Split: {split}")
 
     native_mask_res = (args.resolution // 14) * 4
-    ddp.print(f"  Mask size: {native_mask_res}x{native_mask_res} (native for resolution={args.resolution})")
+    logger.debug(f"  Mask size: {native_mask_res}x{native_mask_res} (native for resolution={args.resolution})")
 
     if args.multi_object:
         args.num_objects = 0
@@ -227,16 +229,16 @@ def _load_datasets(args, ddp):
             min_needed = args.batch_size * target_batches
             if per_gpu_scenes < min_needed:
                 args.samples_per_scene = max(2, (min_needed + per_gpu_scenes - 1) // per_gpu_scenes)
-                ddp.print(f"  Auto-set --samples-per-scene {args.samples_per_scene} for multi-object "
+                logger.debug(f"  Auto-set --samples-per-scene {args.samples_per_scene} for multi-object "
                          f"({args.max_scenes} scenes / {world_size} GPUs = {per_gpu_scenes}/GPU, "
-                         f"target ≥{target_batches} batches of {args.batch_size})")
+                         f"target >={target_batches} batches of {args.batch_size})")
 
     if args.num_objects != 1:
         if args.num_objects == 0:
-            ddp.print(f"  Multi-object training: DYNAMIC K (all visible objects per sample, like SAM3)")
+            logger.debug(f"  Multi-object training: DYNAMIC K (all visible objects per sample, like SAM3)")
         else:
-            ddp.print(f"  Multi-object training: K={args.num_objects} objects per sample")
-        ddp.print(f"  Hungarian matching enabled: {args.num_queries} queries competing for K GT objects")
+            logger.debug(f"  Multi-object training: K={args.num_objects} objects per sample")
+        logger.debug(f"  Hungarian matching enabled: {args.num_queries} queries competing for K GT objects")
 
     dataset = get_dataset(
         dataset_name=args.dataset,
@@ -267,26 +269,26 @@ def _load_datasets(args, ddp):
     )
 
     if args.dataset == 'scannetpp':
-        ddp.print(f"  Sampling strategy: {args.sampling_strategy}")
+        logger.debug(f"  Sampling strategy: {args.sampling_strategy}")
         if args.sampling_strategy == 'chunk_aware':
-            ddp.print(f"  DA3 chunk size: {args.da3_chunk_size}")
-            ddp.print(f"  Note: Views will be sampled from same DA3-NESTED chunk for world-frame consistency")
+            logger.debug(f"  DA3 chunk size: {args.da3_chunk_size}")
+            logger.debug(f"  Note: Views will be sampled from same DA3-NESTED chunk for world-frame consistency")
 
     if args.use_cached_depth:
-        ddp.print(f"  da3_cache_dir: {dataset.da3_cache_dir} ({args.da3_cache_name})")
-        ddp.print(f"  da3_cache_dir exists: {dataset.da3_cache_dir.exists() if dataset.da3_cache_dir else 'N/A'}")
+        logger.debug(f"  da3_cache_dir: {dataset.da3_cache_dir} ({args.da3_cache_name})")
+        logger.debug(f"  da3_cache_dir exists: {dataset.da3_cache_dir.exists() if dataset.da3_cache_dir else 'N/A'}")
         test_sample = dataset[0]
-        ddp.print(f"  Sample keys: {list(test_sample.keys())}")
+        logger.debug(f"  Sample keys: {list(test_sample.keys())}")
         if 'cached_depth' in test_sample:
-            ddp.print(f"  Cached depth ENABLED: shape={test_sample['cached_depth'].shape}")
+            logger.debug(f"  Cached depth ENABLED: shape={test_sample['cached_depth'].shape}")
             if 'cached_da3_extrinsics' in test_sample:
-                ddp.print(f"  Cached DA3 poses ENABLED: extrinsics={test_sample['cached_da3_extrinsics'].shape}")
+                logger.debug(f"  Cached DA3 poses ENABLED: extrinsics={test_sample['cached_da3_extrinsics'].shape}")
         else:
-            ddp.print("  WARNING: --use-cached-depth set but cache not found! DA3 will run live.")
+            logger.info("  WARNING: --use-cached-depth set but cache not found! DA3 will run live.")
 
     sample_weights = None
     if args.class_balanced and getattr(dataset, 'object_samples', None):
-        ddp.print("Computing class-balanced sample weights...")
+        logger.debug("Computing class-balanced sample weights...")
         category_counts = Counter()
         for sample in dataset.object_samples:
             category = sample.get('label', sample.get('category', 'unknown'))
@@ -305,14 +307,14 @@ def _load_datasets(args, ddp):
         sample_weights = [w * len(sample_weights) / weight_sum for w in sample_weights]
 
         sorted_cats = category_counts.most_common()
-        ddp.print(f"  Categories: {num_categories}, Samples: {total_samples}")
-        ddp.print(f"  Most common: {sorted_cats[:3]}")
-        ddp.print(f"  Least common: {sorted_cats[-3:]}")
-        ddp.print(f"  Weight range: [{min(sample_weights):.2f}, {max(sample_weights):.2f}]")
+        logger.debug(f"  Categories: {num_categories}, Samples: {total_samples}")
+        logger.debug(f"  Most common: {sorted_cats[:3]}")
+        logger.debug(f"  Least common: {sorted_cats[-3:]}")
+        logger.debug(f"  Weight range: [{min(sample_weights):.2f}, {max(sample_weights):.2f}]")
 
     collate = partial(collate_fn, max_objects=args.max_objects) if args.max_objects > 0 else collate_fn
     if args.max_objects > 0 and args.num_objects != 1:
-        ddp.print(f"  Max objects per sample: {args.max_objects} (capping K)")
+        logger.debug(f"  Max objects per sample: {args.max_objects} (capping K)")
 
     dataloader = ddp.wrap_dataloader(
         dataset, batch_size=args.batch_size, shuffle=True,
@@ -321,12 +323,12 @@ def _load_datasets(args, ddp):
         prefetch_factor=args.prefetch_factor if args.num_workers > 0 else None,
         sample_weights=sample_weights,
     )
-    ddp.print(f"Dataset: {len(dataset)} samples, {len(dataloader)} batches/gpu")
+    logger.info(f"Dataset: {len(dataset)} samples, {len(dataloader)} batches/gpu")
 
     val_dataset = None
     val_dataloader = None
     if args.val_every > 0:
-        ddp.print(f"\nLoading validation dataset (split='{args.val_split}')...")
+        logger.info(f"Loading validation dataset (split='{args.val_split}')...")
         val_max_samples = args.val_max_samples
         val_part_query_mode = 'all' if args.dataset == 'partimagenet' else args.part_query_mode
 
@@ -363,33 +365,33 @@ def _load_datasets(args, ddp):
             persistent_workers=False,
             prefetch_factor=args.prefetch_factor if args.num_workers > 0 else None,
         )
-        ddp.print(f"Validation dataset: {len(val_dataset)} samples, {len(val_dataloader)} batches/gpu")
-        ddp.print(f"  Validation every {args.val_every} epoch(s)")
-        ddp.print(f"  Save best based on: {'validation mIoU' if args.save_best_val else 'training IoU'}")
+        logger.info(f"Validation dataset: {len(val_dataset)} samples, {len(val_dataloader)} batches/gpu")
+        logger.debug(f"  Validation every {args.val_every} epoch(s)")
+        logger.debug(f"  Save best based on: {'validation mIoU' if args.save_best_val else 'training IoU'}")
 
     return dataset, dataloader, val_dataset, val_dataloader
 
 
 def _build_model(args, ddp, device):
-    ddp.print("\nLoading models...")
+    logger.info("Loading models...")
     sam3_model = build_sam3_image_model(bpe_path=_BPE_PATH, img_size=args.resolution).to(device)
 
     needs_depth = args.use_gasa or args.use_world_pe or (args.pe_type not in ('none', None)) or args.use_centroid_head or args.use_cached_depth
     if needs_depth:
         da3_model = DepthAnything3.from_pretrained(args.da3_model).to(device)
     else:
-        ddp.print("  Skipping DA3 loading (no GASA, no PE, no centroid — depth not needed)")
+        logger.debug("  Skipping DA3 loading (no GASA, no PE, no centroid: depth not needed)")
         da3_model = None
 
     ddp.barrier()
-    ddp.print("All ranks synchronized after model loading")
-    print(f"[R{ddp.rank}] Creating TrianguLangModel...", flush=True)
+    logger.info("All ranks synchronized after model loading")
+    logger.debug(f"[R{ddp.rank}] Creating TrianguLangModel...")
 
     if args.torch_compile:
-        ddp.print(f"Compiling SAM3 backbone with torch.compile(mode='{args.compile_mode}')...")
-        ddp.print("  Note: First epoch will be slower due to JIT compilation")
+        logger.info(f"Compiling SAM3 backbone with torch.compile(mode='{args.compile_mode}')...")
+        logger.debug("  Note: First epoch will be slower due to JIT compilation")
         sam3_model.backbone = torch.compile(sam3_model.backbone, mode=args.compile_mode, fullgraph=False)
-        ddp.print("  SAM3 compilation registered (DA3 not compiled due to control flow)")
+        logger.debug("  SAM3 compilation registered (DA3 not compiled due to control flow)")
 
     use_box = args.use_box_prompts
     use_point = args.use_point_prompts
@@ -464,12 +466,12 @@ def _build_model(args, ddp, device):
         dps = model.sam3.dot_prod_scoring
         if dps.prompt_mlp is not None:
             model.gasa_decoder.scoring_prompt_mlp.load_state_dict(dps.prompt_mlp.state_dict())
-            ddp.print("  Initialized scoring_prompt_mlp from SAM3 DotProductScoring")
+            logger.debug("  Initialized scoring_prompt_mlp from SAM3 DotProductScoring")
         model.gasa_decoder.scoring_prompt_proj.load_state_dict(dps.prompt_proj.state_dict())
         model.gasa_decoder.scoring_hs_proj.load_state_dict(dps.hs_proj.state_dict())
-        ddp.print("  Initialized scoring_prompt_proj + scoring_hs_proj from SAM3 DotProductScoring")
+        logger.debug("  Initialized scoring_prompt_proj + scoring_hs_proj from SAM3 DotProductScoring")
     elif args.init_scoring_from_sam3:
-        ddp.print("  WARNING: --init-scoring-from-sam3 requested but SAM3 has no dot_prod_scoring module")
+        logger.info("  WARNING: --init-scoring-from-sam3 requested but SAM3 has no dot_prod_scoring module")
 
     if args.init_text_crossattn_from_sam3 and hasattr(model.sam3, 'transformer'):
         sam3_decoder_layers = model.sam3.transformer.decoder.layers
@@ -503,11 +505,11 @@ def _build_model(args, ddp, device):
         if hasattr(model.gasa_decoder, 'text_proj'):
             nn.init.eye_(model.gasa_decoder.text_proj.weight)
             nn.init.zeros_(model.gasa_decoder.text_proj.bias)
-            ddp.print("  Initialized text_proj as identity (SAM3 uses no text projection)")
+            logger.debug("  Initialized text_proj as identity (SAM3 uses no text projection)")
 
-        ddp.print(f"  Initialized {transferred} text cross-attention modules from SAM3 decoder")
+        logger.debug(f"  Initialized {transferred} text cross-attention modules from SAM3 decoder")
     elif args.init_text_crossattn_from_sam3:
-        ddp.print("  WARNING: --init-text-crossattn-from-sam3 requested but SAM3 has no transformer module")
+        logger.info("  WARNING: --init-text-crossattn-from-sam3 requested but SAM3 has no transformer module")
 
     if args.init_decoder_from_sam3 and hasattr(model.sam3, 'transformer'):
         sam3_decoder = model.sam3.transformer.decoder
@@ -532,14 +534,14 @@ def _build_model(args, ddp, device):
             gasa_l = model.gasa_decoder.layers[i]
             sam3_l = sam3_layers[i]
             _copy_mha(gasa_l.self_attn, sam3_l.self_attn, f"layers[{i}].self_attn")
-            _copy_ln(gasa_l.norm1, sam3_l.norm2, f"layers[{i}].norm1←norm2 (self-attn)")
-            _copy_ln(gasa_l.norm2, sam3_l.norm1, f"layers[{i}].norm2←norm1 (cross-attn)")
+            _copy_ln(gasa_l.norm1, sam3_l.norm2, f"layers[{i}].norm1<-norm2 (self-attn)")
+            _copy_ln(gasa_l.norm2, sam3_l.norm1, f"layers[{i}].norm2<-norm1 (cross-attn)")
             _copy_ln(gasa_l.norm3, sam3_l.norm3, f"layers[{i}].norm3 (FFN)")
             gasa_l.ffn[0].weight.data.copy_(sam3_l.linear1.weight.data)
             gasa_l.ffn[0].bias.data.copy_(sam3_l.linear1.bias.data)
             gasa_l.ffn[3].weight.data.copy_(sam3_l.linear2.weight.data)
             gasa_l.ffn[3].bias.data.copy_(sam3_l.linear2.bias.data)
-            transferred.append(f"layers[{i}].ffn (linear1→ffn[0], linear2→ffn[3])")
+            transferred.append(f"layers[{i}].ffn (linear1->ffn[0], linear2->ffn[3])")
 
         if hasattr(sam3_decoder, 'norm') and hasattr(model.gasa_decoder, 'norm'):
             _copy_ln(model.gasa_decoder.norm, sam3_decoder.norm, "output norm")
@@ -569,21 +571,21 @@ def _build_model(args, ddp, device):
             )
             transferred.append(f"query_embed ({n_transfer}/{our_nq} queries from SAM3's {sam3_nq})")
 
-        ddp.print(f"  --init-decoder-from-sam3: Transferred {len(transferred)} module groups:")
+        logger.debug(f"  --init-decoder-from-sam3: Transferred {len(transferred)} module groups:")
         for t in transferred:
-            ddp.print(f"    {t}")
+            logger.debug(f"    {t}")
     elif args.init_decoder_from_sam3:
-        ddp.print("  WARNING: --init-decoder-from-sam3 requested but SAM3 has no transformer module")
+        logger.info("  WARNING: --init-decoder-from-sam3 requested but SAM3 has no transformer module")
 
-    print(f"[R{ddp.rank}] TrianguLangModel created and moved to device", flush=True)
+    logger.debug(f"[R{ddp.rank}] TrianguLangModel created and moved to device")
 
     if args.profile:
-        ddp.print("\n  Profiling enabled - will print timing summary after first epoch")
+        logger.debug("  Profiling enabled - will print timing summary after first epoch")
 
     use_find_unused = False
-    print(f"[R{ddp.rank}] Wrapping with DDP (find_unused_parameters={use_find_unused})...", flush=True)
+    logger.debug(f"[R{ddp.rank}] Wrapping with DDP (find_unused_parameters={use_find_unused})...")
     model = ddp.wrap_model(model, find_unused_parameters=use_find_unused)
-    print(f"[R{ddp.rank}] DDP wrap complete", flush=True)
+    logger.debug(f"[R{ddp.rank}] DDP wrap complete")
     base_model = ddp.get_model(model)
 
     if args.profile:
@@ -603,27 +605,27 @@ def _setup_training(model, base_model, args, device, ddp):
                 multi_instance_only=args.spatial_multi_instance_only,
                 qualifier_diversity=True
             )
-            ddp.print(f"GT-aware spatial augmentation enabled (prob={args.spatial_augment_prob}, "
+            logger.debug(f"GT-aware spatial augmentation enabled (prob={args.spatial_augment_prob}, "
                       f"relational={args.spatial_relational_prob})")
             if not args.use_cached_depth:
-                ddp.print(f"  WARNING: --spatial-gt-aware requires --use-cached-depth for accurate depth!")
+                logger.info(f"  WARNING: --spatial-gt-aware requires --use-cached-depth for accurate depth!")
         else:
             spatial_augmentor = SpatialAugmentor(augment_prob=args.spatial_augment_prob)
-            ddp.print(f"Spatial augmentation enabled (prob={args.spatial_augment_prob}) [RANDOM - labels may be wrong!]")
+            logger.debug(f"Spatial augmentation enabled (prob={args.spatial_augment_prob}) [RANDOM - labels may be wrong!]")
 
     if args.use_spatial_tokens or args.use_spatial_points or args.use_object_aware_spatial or args.spatial_augment_prob > 0:
-        ddp.print(f"\n  Spatial Reasoning:")
-        ddp.print(f"    Spatial tokens: {args.use_spatial_tokens}")
-        ddp.print(f"    Spatial-as-points: {args.use_spatial_points}")
-        ddp.print(f"    Object-aware spatial: {args.use_object_aware_spatial}" + (" (uses mask+depth for 'nearest chair')" if args.use_object_aware_spatial else ""))
-        ddp.print(f"    Spatial augmentation: {args.spatial_augment_prob > 0} (prob={args.spatial_augment_prob})")
-        ddp.print(f"    GT-aware augmentation: {args.spatial_gt_aware}" + (" (uses qualifiers from GT masks)" if args.spatial_gt_aware else ""))
+        logger.debug(f"  Spatial Reasoning:")
+        logger.debug(f"    Spatial tokens: {args.use_spatial_tokens}")
+        logger.debug(f"    Spatial-as-points: {args.use_spatial_points}")
+        logger.debug(f"    Object-aware spatial: {args.use_object_aware_spatial}" + (" (uses mask+depth for 'nearest chair')" if args.use_object_aware_spatial else ""))
+        logger.debug(f"    Spatial augmentation: {args.spatial_augment_prob > 0} (prob={args.spatial_augment_prob})")
+        logger.debug(f"    GT-aware augmentation: {args.spatial_gt_aware}" + (" (uses qualifiers from GT masks)" if args.spatial_gt_aware else ""))
         if args.spatial_gt_aware and args.spatial_relational_prob > 0:
-            ddp.print(f"    Relational queries: {args.spatial_relational_prob} (e.g., 'chair next to table')")
+            logger.debug(f"    Relational queries: {args.spatial_relational_prob} (e.g., 'chair next to table')")
         if args.spatial_ranking_weight > 0:
-            ddp.print(f"    Spatial ranking loss: weight={args.spatial_ranking_weight}, margin={args.spatial_ranking_margin}")
+            logger.debug(f"    Spatial ranking loss: weight={args.spatial_ranking_weight}, margin={args.spatial_ranking_margin}")
     if args.mask_smooth_kernel > 0:
-        ddp.print(f"  Mask smoothing: {args.mask_smooth_kernel}x{args.mask_smooth_kernel} avg_pool (matches eval-time LangSplat)")
+        logger.debug(f"  Mask smoothing: {args.mask_smooth_kernel}x{args.mask_smooth_kernel} avg_pool (matches eval-time LangSplat)")
 
     sheaf_loss_fn = None
     feature_sheaf_loss_fn = None
@@ -635,10 +637,10 @@ def _setup_training(model, base_model, args, device, ddp):
                 context_dim=5,
             ).to(device)
             n_sheaf_params = sum(p.numel() for p in feature_sheaf_loss_fn.parameters())
-            ddp.print(f"Feature sheaf loss initialized (non-constant, learned restriction maps)")
-            ddp.print(f"  Stalks: R^256 (SAM3 features), Edge space: R^{args.sheaf_d_edge}")
-            ddp.print(f"  Trainable params: {n_sheaf_params:,}")
-            ddp.print(f"  Threshold: {args.sheaf_threshold}m, max_frame_distance: {args.sheaf_max_frame_distance}")
+            logger.debug(f"Feature sheaf loss initialized (non-constant, learned restriction maps)")
+            logger.debug(f"  Stalks: R^256 (SAM3 features), Edge space: R^{args.sheaf_d_edge}")
+            logger.debug(f"  Trainable params: {n_sheaf_params:,}")
+            logger.debug(f"  Threshold: {args.sheaf_threshold}m, max_frame_distance: {args.sheaf_max_frame_distance}")
         else:
             sheaf_loss_fn = SheafConsistencyLoss(
                 threshold=args.sheaf_threshold,
@@ -656,20 +658,20 @@ def _setup_training(model, base_model, args, device, ddp):
             detach_str = ", detach_target=True" if args.sheaf_detach_target else ", detach_target=False (CAUTION: may cause fighting)"
             sym_str = " (symmetric)" if args.sheaf_symmetric_detach and args.sheaf_detach_target else ""
             mutual_str = ", mutual_nn=True" if args.sheaf_mutual_nn else ""
-            ddp.print(f"Sheaf consistency loss initialized (constant sheaf){soft_str}{detach_str}{sym_str}{mutual_str}")
+            logger.debug(f"Sheaf consistency loss initialized (constant sheaf){soft_str}{detach_str}{sym_str}{mutual_str}")
 
     lora_manager = None
     if args.use_lora or args.lora_mask_embed:
         if not args.use_lora:
             args.use_lora = True
         lora_manager = LoRAManager(rank=args.lora_rank, alpha=args.lora_alpha)
-        ddp.print(f"\nLoRA enabled (rank={args.lora_rank}, alpha={args.lora_alpha}):")
+        logger.debug(f"LoRA enabled (rank={args.lora_rank}, alpha={args.lora_alpha}):")
         if args.lora_sam3:
             sam3_count = lora_manager.add_lora_to_model(base_model.sam3, "sam3")
-            ddp.print(f"  SAM3: {sam3_count} adapters")
+            logger.debug(f"  SAM3: {sam3_count} adapters")
         if args.lora_da3:
             da3_count = lora_manager.add_lora_to_model(base_model.da3, "da3")
-            ddp.print(f"  DA3: {da3_count} adapters")
+            logger.debug(f"  DA3: {da3_count} adapters")
         if args.lora_mask_embed:
             mask_pred = base_model.sam3.segmentation_head.mask_predictor
             me_count = 0
@@ -684,15 +686,15 @@ def _setup_training(model, base_model, args, device, ddp):
                     lora_manager.hooks.append(handle)
                     me_count += 1
             lora_manager._adapter_count += me_count
-            ddp.print(f"  mask_embed: {me_count} adapters")
+            logger.debug(f"  mask_embed: {me_count} adapters")
         lora_manager.to(device)
-        ddp.print(f"  Total LoRA params: {lora_manager.num_parameters:,}")
+        logger.debug(f"  Total LoRA params: {lora_manager.num_parameters:,}")
 
     total_params = sum(p.numel() for p in base_model.parameters())
     trainable_params = sum(p.numel() for p in base_model.parameters() if p.requires_grad)
     gasa_params = sum(p.numel() for p in base_model.gasa_decoder.parameters())
     lora_params = lora_manager.num_parameters if lora_manager else 0
-    ddp.print(f"\nParameters: Total={total_params:,}, Trainable={trainable_params + lora_params:,} ({100*(trainable_params + lora_params)/total_params:.2f}%), GASA={gasa_params:,}" + (f", LoRA={lora_params:,}" if lora_params > 0 else ""))
+    logger.info(f"Parameters: Total={total_params:,}, Trainable={trainable_params + lora_params:,} ({100*(trainable_params + lora_params)/total_params:.2f}%), GASA={gasa_params:,}" + (f", LoRA={lora_params:,}" if lora_params > 0 else ""))
 
     trainable_model_params = list(filter(lambda p: p.requires_grad, model.parameters()))
     all_params = trainable_model_params
@@ -701,9 +703,9 @@ def _setup_training(model, base_model, args, device, ddp):
     if feature_sheaf_loss_fn is not None:
         feature_sheaf_params = list(feature_sheaf_loss_fn.parameters())
         all_params = all_params + feature_sheaf_params
-        ddp.print(f"Feature sheaf params: {sum(p.numel() for p in feature_sheaf_params):,}")
+        logger.debug(f"Feature sheaf params: {sum(p.numel() for p in feature_sheaf_params):,}")
     optimizer = torch.optim.AdamW(all_params, lr=args.lr, weight_decay=0.01)
-    ddp.print(f"Learning rate: {args.lr} (no scaling, world_size={ddp.world_size})")
+    logger.debug(f"Learning rate: {args.lr} (no scaling, world_size={ddp.world_size})")
     scaler = GradScaler()
 
     scheduler = None
@@ -714,13 +716,13 @@ def _setup_training(model, base_model, args, device, ddp):
         warmup_scheduler = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs)
         cosine_scheduler = CosineAnnealingLR(optimizer, T_max=cosine_epochs, eta_min=args.lr_min)
         scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[warmup_epochs])
-        ddp.print(f"LR Scheduler: Cosine annealing with {warmup_epochs} warmup epochs, min_lr={args.lr_min}")
+        logger.debug(f"LR Scheduler: Cosine annealing with {warmup_epochs} warmup epochs, min_lr={args.lr_min}")
     elif args.lr_scheduler == 'step':
         from torch.optim.lr_scheduler import StepLR
         scheduler = StepLR(optimizer, step_size=args.lr_step_size, gamma=args.lr_gamma)
-        ddp.print(f"LR Scheduler: Step decay every {args.lr_step_size} epochs, gamma={args.lr_gamma}")
+        logger.debug(f"LR Scheduler: Step decay every {args.lr_step_size} epochs, gamma={args.lr_gamma}")
     else:
-        ddp.print("LR Scheduler: None (flat LR)")
+        logger.debug("LR Scheduler: None (flat LR)")
 
     run_dir = PROJECT_ROOT / 'runs' / 'train' / args.run_name
     checkpoint_dir = Path(args.checkpoint_dir) / args.run_name
@@ -736,7 +738,7 @@ def _setup_training(model, base_model, args, device, ddp):
             else:
                 resume_path = resume_path / 'best.pt'
         if resume_path.exists():
-            ddp.print(f"Resuming from checkpoint: {resume_path}")
+            logger.info(f"Resuming from checkpoint: {resume_path}")
             checkpoint = torch.load(resume_path, map_location='cpu', weights_only=False)
             base_model.gasa_decoder.load_state_dict_compat(checkpoint['gasa_decoder'], strict=False)
             base_model.query_proj.load_state_dict(checkpoint['query_proj'])
@@ -747,30 +749,30 @@ def _setup_training(model, base_model, args, device, ddp):
             if 'optimizer' in checkpoint:
                 try:
                     optimizer.load_state_dict(checkpoint['optimizer'])
-                    ddp.print(f"  Restored optimizer state")
+                    logger.debug(f"  Restored optimizer state")
                 except (ValueError, RuntimeError) as e:
-                    ddp.print(f"  WARNING: Could not restore optimizer state ({e}). "
+                    logger.info(f"  WARNING: Could not restore optimizer state ({e}). "
                               f"Re-initializing optimizer (new params added since checkpoint).")
 
             if scheduler is not None and 'scheduler' in checkpoint and checkpoint['scheduler'] is not None:
                 scheduler.load_state_dict(checkpoint['scheduler'])
-                ddp.print(f"  Restored scheduler state")
+                logger.debug(f"  Restored scheduler state")
 
             if 'scaler' in checkpoint and checkpoint['scaler'] is not None:
                 scaler.load_state_dict(checkpoint['scaler'])
-                ddp.print(f"  Restored scaler state (scale={scaler.get_scale():.0f})")
+                logger.debug(f"  Restored scaler state (scale={scaler.get_scale():.0f})")
 
             if lora_manager is not None and 'lora' in checkpoint and checkpoint['lora'] is not None:
                 lora_manager.load_state_dict(checkpoint['lora'])
-                ddp.print(f"  Restored LoRA state ({lora_manager.num_adapters} adapters)")
+                logger.debug(f"  Restored LoRA state ({lora_manager.num_adapters} adapters)")
 
             if 'sam3_seghead' in checkpoint and checkpoint['sam3_seghead'] is not None:
                 base_model.sam3.segmentation_head.load_state_dict(checkpoint['sam3_seghead'])
-                ddp.print(f"  Restored SAM3 seghead state")
+                logger.debug(f"  Restored SAM3 seghead state")
 
             if 'mask_embed' in checkpoint and checkpoint['mask_embed'] is not None:
                 base_model.sam3.segmentation_head.mask_predictor.mask_embed.load_state_dict(checkpoint['mask_embed'])
-                ddp.print(f"  Restored mask_embed state")
+                logger.debug(f"  Restored mask_embed state")
 
             try:
                 if 'rng_state' in checkpoint:
@@ -785,40 +787,40 @@ def _setup_training(model, base_model, args, device, ddp):
                 if 'cuda_rng_state' in checkpoint and checkpoint['cuda_rng_state'] is not None and torch.cuda.is_available():
                     cuda_states = [torch.ByteTensor(s) if not isinstance(s, torch.ByteTensor) else s for s in checkpoint['cuda_rng_state']]
                     torch.cuda.set_rng_state_all(cuda_states)
-                ddp.print("  Restored RNG states")
+                logger.debug("  Restored RNG states")
             except Exception as e:
-                ddp.print(f"  Skipping RNG restore (non-critical): {e}")
+                logger.debug(f"  Skipping RNG restore (non-critical): {e}")
 
             val_str = f", best_val_miou={100*best_val_miou:.2f}%" if best_val_miou > 0 else ""
-            ddp.print(f"  Loaded checkpoint from epoch {checkpoint.get('epoch', -1) + 1}, best_iou={100*best_iou:.2f}%{val_str}")
-            ddp.print(f"  Resuming training from epoch {start_epoch + 1}")
+            logger.info(f"  Loaded checkpoint from epoch {checkpoint.get('epoch', -1) + 1}, best_iou={100*best_iou:.2f}%{val_str}")
+            logger.info(f"  Resuming training from epoch {start_epoch + 1}")
             del checkpoint
         else:
-            ddp.print(f"WARNING: Checkpoint not found at {resume_path}, starting fresh")
+            logger.info(f"WARNING: Checkpoint not found at {resume_path}, starting fresh")
 
     elif args.load_weights:
         weights_path = Path(args.load_weights)
         if weights_path.is_dir():
             weights_path = weights_path / 'best.pt'
         if weights_path.exists():
-            ddp.print(f"Loading weights from: {weights_path}")
+            logger.info(f"Loading weights from: {weights_path}")
             checkpoint = torch.load(weights_path, map_location=device, weights_only=False)
             missing, unexpected = base_model.gasa_decoder.load_state_dict_compat(checkpoint['gasa_decoder'], strict=False)
             if missing:
-                ddp.print(f"  Missing keys (will be randomly initialized): {len(missing)} keys")
+                logger.debug(f"  Missing keys (will be randomly initialized): {len(missing)} keys")
             if unexpected:
-                ddp.print(f"  Unexpected keys (ignored): {len(unexpected)} keys")
+                logger.debug(f"  Unexpected keys (ignored): {len(unexpected)} keys")
             base_model.query_proj.load_state_dict(checkpoint['query_proj'], strict=False)
             if 'sam3_seghead' in checkpoint and checkpoint['sam3_seghead'] is not None:
                 base_model.sam3.segmentation_head.load_state_dict(checkpoint['sam3_seghead'])
-                ddp.print(f"  Loaded SAM3 seghead weights")
+                logger.debug(f"  Loaded SAM3 seghead weights")
             if 'mask_embed' in checkpoint and checkpoint['mask_embed'] is not None:
                 base_model.sam3.segmentation_head.mask_predictor.mask_embed.load_state_dict(checkpoint['mask_embed'])
-                ddp.print(f"  Loaded mask_embed weights")
-            ddp.print(f"  Loaded model weights (epoch {checkpoint.get('epoch', '?')}, iou={100*checkpoint.get('best_iou', 0):.2f}%)")
-            ddp.print(f"  Starting fresh from epoch 0 with new optimizer/scheduler")
+                logger.debug(f"  Loaded mask_embed weights")
+            logger.info(f"  Loaded model weights (epoch {checkpoint.get('epoch', '?')}, iou={100*checkpoint.get('best_iou', 0):.2f}%)")
+            logger.info(f"  Starting fresh from epoch 0 with new optimizer/scheduler")
         else:
-            ddp.print(f"WARNING: Weights not found at {weights_path}, starting fresh")
+            logger.info(f"WARNING: Weights not found at {weights_path}, starting fresh")
 
     return optimizer, scaler, scheduler, lora_manager, sheaf_loss_fn, feature_sheaf_loss_fn, \
            spatial_augmentor, gt_aware_spatial, run_dir, checkpoint_dir, best_iou, best_val_miou, start_epoch
@@ -893,17 +895,17 @@ def _finalize_epoch(epoch, args, ddp, device, optimizer, cat_metrics, epoch_loss
     if num_samples > 0:
         sheaf_str = f", Sheaf={avg_sheaf_loss:.4f}" if args.use_sheaf_loss else ""
         acc_str = f", Acc@5cm={acc_5cm:.1f}%, Acc@10cm={acc_10cm:.1f}%, MDE={mean_dist_error*100:.1f}cm" if (args.use_centroid_head or args.eval_localization) and len(epoch_centroid_errors) > 0 else ""
-        ddp.print(f"Epoch {epoch+1}: Loss={avg_loss:.4f}{sheaf_str}, IoU={100*avg_iou:.2f}%, mIoU={100*miou:.2f}% ({num_cats} cats), mAcc={100*avg_macc:.2f}%, Recall={100*avg_recall:.2f}%{acc_str}, LR={current_lr:.2e}")
+        logger.info(f"Epoch {epoch+1}: Loss={avg_loss:.4f}{sheaf_str}, IoU={100*avg_iou:.2f}%, mIoU={100*miou:.2f}% ({num_cats} cats), mAcc={100*avg_macc:.2f}%, Recall={100*avg_recall:.2f}%{acc_str}, LR={current_lr:.2e}")
 
         if args.profile and epoch == start_epoch and ddp.is_main:
-            ddp.print(f"\n{base_model.get_profile_summary()}\n")
+            logger.debug(f"{base_model.get_profile_summary()}")
 
         if args.vis_every_epochs > 0 and (epoch + 1) % args.vis_every_epochs == 0 and last_vis_data and ddp.is_main:
             try:
                 visualize_predictions(run_dir, epoch + 1, last_vis_data['images'], last_vis_data['gt_masks'],
                                       last_vis_data['outputs'], last_vis_data['prompts'])
             except Exception as e:
-                print(f"  Visualization failed: {e}")
+                logger.debug(f"  Visualization failed: {e}")
 
     return avg_loss, avg_iou, avg_macc, avg_recall, avg_sheaf_loss, miou, num_cats, num_samples, \
            acc_5cm, acc_10cm, acc_50cm, mean_dist_error
@@ -915,10 +917,10 @@ def _run_validation_and_save(model, val_dataloader, base_model, optimizer, sched
     import json
     val_metrics = None
     if args.val_every > 0 and val_dataloader is not None and (epoch + 1) % args.val_every == 0:
-        ddp.print(f"  Running validation...")
+        logger.info(f"  Running validation...")
         val_metrics = run_validation(model, val_dataloader, device, ddp, args, scaler)
         val_str = f"  Val: Loss={val_metrics['val_loss']:.4f}, IoU={100*val_metrics['val_iou']:.2f}%, mIoU={100*val_metrics['val_miou']:.2f}% ({val_metrics['val_num_categories']} cats)"
-        ddp.print(val_str)
+        logger.info(val_str)
 
         if val_metrics['val_miou'] > best_val_miou:
             best_val_miou = val_metrics['val_miou']
@@ -926,6 +928,6 @@ def _run_validation_and_save(model, val_dataloader, base_model, optimizer, sched
                 ckpt = _save_checkpoint(base_model, optimizer, scheduler, scaler, lora_manager,
                                         args, epoch, best_iou, best_val_miou, checkpoint_dir)
                 torch.save(ckpt, checkpoint_dir / 'best.pt')
-                print(f"  -> New best val mIoU! Saved to {checkpoint_dir / 'best.pt'}")
+                logger.info(f"  -> New best val mIoU! Saved to {checkpoint_dir / 'best.pt'}")
 
     return val_metrics, best_val_miou

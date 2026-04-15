@@ -99,9 +99,9 @@ class GASADecoderLayer(nn.Module):
 
         # 2D box-relative position bias (SAM3's boxRPB)
         # Each layer predicts a 2D box, computes per-pixel position relative to box edges,
-        # maps through learned MLP → per-head attention bias
+        # maps through learned MLP -> per-head attention bias
         if use_box_rpb:
-            # Box prediction: query → (cx, cy, w, h) delta
+            # Box prediction: query -> (cx, cy, w, h) delta
             self.bbox_embed = nn.Sequential(
                 nn.Linear(d_model, d_model),
                 nn.ReLU(),
@@ -109,7 +109,7 @@ class GASADecoderLayer(nn.Module):
             )
             nn.init.zeros_(self.bbox_embed[-1].weight)
             nn.init.zeros_(self.bbox_embed[-1].bias)
-            # Box-relative position → per-head attention bias (like SAM3's boxRPB_embed_x/y)
+            # Box-relative position -> per-head attention bias (like SAM3's boxRPB_embed_x/y)
             self.box_rpb_embed_x = nn.Sequential(
                 nn.Linear(2, d_model),
                 nn.ReLU(),
@@ -215,7 +215,7 @@ class GASADecoderLayer(nn.Module):
             memory_pos: [B, L, 3] 3D positions of memory tokens
             query_pos: [B, Q, 3] 3D positions of queries (optional, uses scene centroid if None)
             reference_boxes: [B, Q, 4] predicted boxes (cx, cy, w, h) normalized [0,1] for boxRPB
-            spatial_hw: (H, W) tuple — spatial dims of memory for boxRPB coordinate grid
+            spatial_hw: (H, W) tuple, spatial dims of memory for boxRPB coordinate grid
             return_query_pos: If True, also return attention-weighted query positions for next layer
             text_embedding: [B, T, D] text embeddings for per-layer conditioning (optional)
             rayrope_ctx: dict with 'rayrope', 'w2c', 'intrinsics', 'depth_conf' (optional)
@@ -363,7 +363,7 @@ class GASADecoderLayer(nn.Module):
                 coords_y = torch.linspace(0, 1, H_s, device=queries.device)
                 coords_x = torch.linspace(0, 1, W_s, device=queries.device)
 
-                # Relative positions: pixel coord minus box edges → [B, Q, H or W, 2]
+                # Relative positions: pixel coord minus box edges -> [B, Q, H or W, 2]
                 # delta_x[:,:,:,0] = pixel_x - x1, delta_x[:,:,:,1] = pixel_x - x2
                 delta_x = coords_x.view(1, 1, -1, 1) - boxes_xyxy[:, :, None, 0::2]  # [B, Q, W, 2]
                 delta_y = coords_y.view(1, 1, -1, 1) - boxes_xyxy[:, :, None, 1::2]  # [B, Q, H, 2]
@@ -372,7 +372,7 @@ class GASADecoderLayer(nn.Module):
                 delta_x_log = torch.sign(delta_x) * torch.log2(torch.abs(delta_x * 8) + 1.0) / 3.0
                 delta_y_log = torch.sign(delta_y) * torch.log2(torch.abs(delta_y * 8) + 1.0) / 3.0
 
-                # MLP → per-head bias
+                # MLP -> per-head bias
                 rpb_x = self.box_rpb_embed_x(delta_x_log)  # [B, Q, W, n_heads]
                 rpb_y = self.box_rpb_embed_y(delta_y_log)  # [B, Q, H, n_heads]
 
@@ -404,7 +404,7 @@ class GASADecoderLayer(nn.Module):
             queries = queries + self.dropout(depth_out)
 
         # 2.5 Image-to-token cross-attention (SAM3 TwoWayTransformer step 4)
-        # Pixels attend back to queries → pixel features become mask-aware
+        # Pixels attend back to queries -> pixel features become mask-aware
         # This updates memory (pixel features), making subsequent dot product sharper
         #
         # SAM3's TwoWayTransformer operates on ~4K tokens (64×64), not raw encoder memory.
@@ -501,9 +501,9 @@ class MaskRefiner(nn.Module):
 
     Architecture:
         coarse_mask [B, Q, 288, 288] + image [B, 3, 288, 288]
-        → 3 conv layers with image features
-        → residual connection (starts as identity)
-        → refined_mask [B, Q, 288, 288]
+        -> 3 conv layers with image features
+        -> residual connection (starts as identity)
+        -> refined_mask [B, Q, 288, 288]
 
     ~50K parameters.
     """
@@ -519,7 +519,7 @@ class MaskRefiner(nn.Module):
             nn.GELU(),
             nn.Conv2d(hidden_dim, 1, 1),
         )
-        # Initialize last conv to zero → starts as identity (no refinement)
+        # Initialize last conv to zero -> starts as identity (no refinement)
         nn.init.zeros_(self.refine[-1].weight)
         nn.init.zeros_(self.refine[-1].bias)
 
@@ -555,7 +555,7 @@ class SpatialAttentionBias(nn.Module):
     Instead of a static spatial embedding on queries, this creates a per-pixel
     attention bias based on the spatial qualifier and depth/position information.
     The bias is added to cross-attention scores, softly guiding attention toward
-    the spatially correct region (e.g., nearest → low-depth pixels).
+    the spatially correct region (e.g., nearest -> low-depth pixels).
 
     This gives the spatial token actual geometric information rather than
     relying on a single learned embedding.
@@ -602,7 +602,7 @@ class SpatialAttentionBias(nn.Module):
         depth_norm = (depth_flat - d_min) / (d_max - d_min + 1e-6)  # [B, L]
 
         # Build spatial prior for each sample based on qualifier
-        # prior: [B, L] — higher = more attention
+        # prior: [B, L], higher = more attention
         bias = torch.zeros(B, depth_flat.shape[-1], device=device)
         for b in range(B):
             sq = spatial_qualifier_idx[b].item()
@@ -642,14 +642,14 @@ class TextConditionedSpatialBias(nn.Module):
     the depth dimension, while "leftmost chair" activates x.
 
     Architecture (from ViL3DRel):
-        g = W_spatial * text_cls      → [B, 6] gating vector
-        f = [depth, x, y, 1/depth, 1-x, 1-y]  → [B, L, 6] spatial features per pixel
-        bias = sigmoid(g) * f          → [B, L] per-pixel spatial score
+        g = W_spatial * text_cls      -> [B, 6] gating vector
+        f = [depth, x, y, 1/depth, 1-x, 1-y]  -> [B, L, 6] spatial features per pixel
+        bias = sigmoid(g) * f          -> [B, L] per-pixel spatial score
     """
 
     def __init__(self, text_dim: int = 256, spatial_dim: int = 6, n_heads: int = 8):
         super().__init__()
-        # Text → spatial gate projection
+        # Text -> spatial gate projection
         self.text_to_gate = nn.Sequential(
             nn.Linear(text_dim, spatial_dim * n_heads),
         )
@@ -707,8 +707,8 @@ class TextConditionedSpatialBias(nn.Module):
             y_flat,            # bottommost: high value at high y
         ], dim=-1)  # [B, L, 6]
 
-        # Apply text-conditioned gate: [B, n_heads, 6] @ [B, L, 6].T → [B, n_heads, L]
-        # Einstein notation: gate[b,h,d] * features[b,l,d] → bias[b,h,l]
+        # Apply text-conditioned gate: [B, n_heads, 6] @ [B, L, 6].T -> [B, n_heads, L]
+        # Einstein notation: gate[b,h,d] * features[b,l,d] -> bias[b,h,l]
         bias = torch.einsum('bhd,bld->bhl', gate, spatial_features)  # [B, n_heads, L]
 
         # Reshape for attention: [B, n_heads, 1, L] (broadcast over Q)

@@ -129,7 +129,7 @@ class SheafConsistencyLoss(nn.Module):
                       This prevents the "fighting" problem where both views get
                       gradients to match each other, causing sheaf loss to increase.
                       Only the source view learns to match the (frozen) target.
-                      DEFAULT: True (fixed 2026-01-26 — False caused loss to increase).
+                      DEFAULT: True (fixed 2026-01-26; False caused loss to increase).
         symmetric_detach: If True (default), randomly swap source/target each pair
                          to avoid always detaching the same view direction.
         mutual_nn: If True (default), require mutual nearest neighbors for correspondences.
@@ -266,7 +266,7 @@ class SheafConsistencyLoss(nn.Module):
                 i_min, i_max = mask_i_valid.min().item(), mask_i_valid.max().item()
                 looks_like_probs = (i_min >= -0.01 and i_max <= 1.01)
             if looks_like_probs and (i_max - i_min) < 0.5:
-                # Already probabilities (or very compressed range) — don't double-sigmoid
+                # Already probabilities (or very compressed range): don't double-sigmoid
                 pred_i = mask_i_valid.clamp(0, 1)
                 pred_j = mask_j_valid.clamp(0, 1)
                 if not hasattr(self, '_sigmoid_warned'):
@@ -277,7 +277,7 @@ class SheafConsistencyLoss(nn.Module):
                 pred_i = torch.sigmoid(mask_i_valid)  # [N_i]
                 pred_j = torch.sigmoid(mask_j_valid)  # [N_j]
 
-            # Detach target to prevent "fighting" — only source view gets gradients.
+            # Detach target to prevent "fighting": only source view gets gradients.
             # With symmetric_detach, randomly pick which view is the target each pair
             # to avoid always learning in one direction.
             if self.detach_target:
@@ -330,14 +330,14 @@ class SheafConsistencyLoss(nn.Module):
                 loss = (diff * correspondence_confidence).sum() / (correspondence_confidence.sum() + 1e-6)
             else:
                 # Hard nearest neighbor matching
-                min_dists_ij, min_indices_ij = dists.min(dim=-1)  # i→j: [N_i]
+                min_dists_ij, min_indices_ij = dists.min(dim=-1)  # i->j: [N_i]
                 pred_j_nn = pred_j[min_indices_ij]  # [N_i]
                 valid_corresp = (min_dists_ij < self.threshold)
 
-                # Mutual nearest neighbor filtering: require that j→i also maps back
+                # Mutual nearest neighbor filtering: require that j->i also maps back
                 # This filters noisy correspondences from depth estimation errors
                 if self.mutual_nn:
-                    min_dists_ji, min_indices_ji = dists.min(dim=0)  # j→i: [N_j]
+                    min_dists_ji, min_indices_ji = dists.min(dim=0)  # j->i: [N_j]
                     # For each i, check if j's NN maps back to i
                     i_indices = torch.arange(len(min_indices_ij), device=device)
                     j_matched = min_indices_ij  # Which j does each i match to?
@@ -395,9 +395,9 @@ class AsymmetricRestrictionSheaf(nn.Module):
     Non-constant sheaf with asymmetric, direction-dependent restriction maps.
 
     Unlike LearnedRestrictionMap (which uses a single map for both directions),
-    this module uses separate networks for source→edge and target→edge
-    transformations: R_{i→e}(s_i, ctx_i) via alpha_net_source, and
-    R_{j→e}(s_j, ctx_j) via alpha_net_target.
+    this module uses separate networks for source->edge and target->edge
+    transformations: R_{i->e}(s_i, ctx_i) via alpha_net_source, and
+    R_{j->e}(s_j, ctx_j) via alpha_net_target.
 
     Context is expanded beyond LearnedRestrictionMap with viewing angle proxy
     and depth edge indicator (5D total).
@@ -414,7 +414,7 @@ class AsymmetricRestrictionSheaf(nn.Module):
         super().__init__()
         self.context_dim = context_dim
 
-        # Source → edge restriction map
+        # Source -> edge restriction map
         self.alpha_net_source = nn.Sequential(
             nn.Linear(context_dim, hidden_dim),
             nn.ReLU(),
@@ -426,7 +426,7 @@ class AsymmetricRestrictionSheaf(nn.Module):
             nn.Linear(hidden_dim, 1),
         )
 
-        # Target → edge restriction map (separate parameters)
+        # Target -> edge restriction map (separate parameters)
         self.alpha_net_target = nn.Sequential(
             nn.Linear(context_dim, hidden_dim),
             nn.ReLU(),
@@ -447,13 +447,13 @@ class AsymmetricRestrictionSheaf(nn.Module):
             nn.init.zeros_(net[-1].bias)
 
     def forward_source(self, pred: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
-        """Apply source → edge restriction map. pred: [N], context: [N, 5]."""
+        """Apply source -> edge restriction map. pred: [N], context: [N, 5]."""
         alpha = torch.sigmoid(self.alpha_net_source(context).squeeze(-1))
         beta = self.beta_net_source(context).squeeze(-1) * 0.1
         return pred * alpha + beta
 
     def forward_target(self, pred: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
-        """Apply target → edge restriction map. pred: [N], context: [N, 5]."""
+        """Apply target -> edge restriction map. pred: [N], context: [N, 5]."""
         alpha = torch.sigmoid(self.alpha_net_target(context).squeeze(-1))
         beta = self.beta_net_target(context).squeeze(-1) * 0.1
         return pred * alpha + beta
@@ -498,7 +498,7 @@ class FeatureSheafLoss(nn.Module):
     This is the most mathematically genuine sheaf formulation:
     - Stalks: F(v_i) = R^d_stalk (feature vectors at corresponding pixels)
     - Edge space: F(e_ij) = R^d_edge (shared comparison space)
-    - Restriction maps: R_{v→e}(f, ctx) = Linear(f) * sigmoid(GateNet(ctx))
+    - Restriction maps: R_{v->e}(f, ctx) = Linear(f) * sigmoid(GateNet(ctx))
 
     The gate varies per-point based on geometry, making this a non-constant
     sheaf: different views and different spatial locations get different
@@ -524,7 +524,7 @@ class FeatureSheafLoss(nn.Module):
         self.d_stalk = d_stalk
         self.d_edge = d_edge
 
-        # Shared linear projection: stalk → edge space
+        # Shared linear projection: stalk -> edge space
         self.projection = nn.Linear(d_stalk, d_edge, bias=True)
 
         # Per-point gate conditioned on geometric context

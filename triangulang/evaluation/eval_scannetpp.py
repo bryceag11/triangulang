@@ -9,6 +9,9 @@ from collections import defaultdict
 from tqdm import tqdm
 from datetime import datetime
 import matplotlib.pyplot as plt
+import triangulang
+
+logger = triangulang.get_logger(__name__)
 
 from triangulang.evaluation.eval_utils import compute_spatial_gt
 from triangulang.evaluation.data_loading import (
@@ -49,7 +52,7 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
     else:
         scene_ids = sorted(available_semantics)
 
-    ddp.print(f"Found {len(scene_ids)} scenes with semantics_2d data")
+    logger.info(f"Found {len(scene_ids)} scenes with semantics_2d data")
 
     # Single-object-viz mode: focus on specific scene(s)
     # Track if we already distributed scenes (to avoid double-distribution)
@@ -60,9 +63,9 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
         requested_scenes = args.scene if isinstance(args.scene, list) else [args.scene]
         scene_ids = [s for s in scene_ids if s in requested_scenes]
         if not scene_ids:
-            ddp.print(f"ERROR: --scene {args.scene} not found. Available: {sorted(available_semantics)[:20]}")
+            logger.info(f"ERROR: --scene {args.scene} not found. Available: {sorted(available_semantics)[:20]}")
             return
-        ddp.print(f"Filtering to scene(s): {scene_ids}")
+        logger.info(f"Filtering to scene(s): {scene_ids}")
 
     if args.single_object_viz:
         num_viz_scenes = getattr(args, 'viz_num_scenes', 1)
@@ -71,10 +74,10 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
             # Specific scene requested
             if args.viz_scene in scene_ids:
                 scene_ids = [args.viz_scene]
-                ddp.print(f"\n[single-object-viz] Focusing on scene: {args.viz_scene}")
+                logger.info(f"[single-object-viz] Focusing on scene: {args.viz_scene}")
             else:
-                ddp.print(f"ERROR: --viz-scene '{args.viz_scene}' not found in available scenes")
-                ddp.print(f"Available scenes (first 20): {scene_ids[:20]}")
+                logger.info(f"ERROR: --viz-scene '{args.viz_scene}' not found in available scenes")
+                logger.info(f"Available scenes (first 20): {scene_ids[:20]}")
                 return
         elif args.viz_random_scene:
             # Pick random scenes - with DDP, each rank gets different scenes
@@ -90,18 +93,18 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
                 start_idx = ddp.rank * scenes_per_rank
                 end_idx = start_idx + scenes_per_rank
                 scene_ids = shuffled[start_idx:end_idx]
-                ddp.print(f"\n[single-object-viz] Rank {ddp.rank}: {len(scene_ids)} random scene(s): {scene_ids}")
+                logger.info(f"[single-object-viz] Rank {ddp.rank}: {len(scene_ids)} random scene(s): {scene_ids}")
                 scenes_already_distributed = True  # Don't distribute again below
             else:
                 # Single GPU: take first N random scenes
                 scene_ids = shuffled[:num_viz_scenes]
-                ddp.print(f"\n[single-object-viz] {len(scene_ids)} random scene(s): {scene_ids}")
+                logger.info(f"[single-object-viz] {len(scene_ids)} random scene(s): {scene_ids}")
         else:
             # Default: use first N scenes alphabetically
             scene_ids = scene_ids[:num_viz_scenes]
-            ddp.print(f"\n[single-object-viz] Using first {len(scene_ids)} scene(s): {scene_ids}")
-            ddp.print(f"    Tip: Use --viz-random-scene for random selection")
-            ddp.print(f"    Tip: Use --viz-num-scenes N for multiple scenes")
+            logger.info(f"[single-object-viz] Using first {len(scene_ids)} scene(s): {scene_ids}")
+            logger.debug(f"    Tip: Use --viz-random-scene for random selection")
+            logger.debug(f"    Tip: Use --viz-num-scenes N for multiple scenes")
     elif args.max_scenes:
         scene_ids = scene_ids[:args.max_scenes]
 
@@ -114,17 +117,17 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
         start_idx = ddp.rank * scenes_per_rank
         end_idx = min(start_idx + scenes_per_rank, total_scenes)
         scene_ids = scene_ids[start_idx:end_idx]
-        ddp.print(f"Rank {ddp.rank}: evaluating scenes {start_idx}-{end_idx} ({len(scene_ids)} scenes)")
+        logger.info(f"Rank {ddp.rank}: evaluating scenes {start_idx}-{end_idx} ({len(scene_ids)} scenes)")
 
-    ddp.print(f"\nEvaluating on {total_scenes} scenes from {args.split}...")
+    logger.info(f"Evaluating on {total_scenes} scenes from {args.split}...")
     if args.single_prompt:
-        ddp.print(f"Mode: SINGLE-PROMPT (prompt view {args.prompt_view}, measure other views)")
-        ddp.print(f"  This is our key differentiator from MV-SAM!")
-        ddp.print(f"  Uses cross-view attention to propagate understanding.")
+        logger.info(f"Mode: SINGLE-PROMPT (prompt view {args.prompt_view}, measure other views)")
+        logger.debug(f"  This is our key differentiator from MV-SAM!")
+        logger.debug(f"  Uses cross-view attention to propagate understanding.")
     else:
-        ddp.print(f"Mode: MULTI-PROMPT (prompt all views)")
-    ddp.print(f"Protocol: {args.num_frames} frames, {args.objects_per_scene} objects/scene, ≥{args.min_mask_coverage*100:.2g}% coverage")
-    ddp.print(f"Frame sampling: {args.eval_sampling}")
+        logger.info(f"Mode: MULTI-PROMPT (prompt all views)")
+    logger.debug(f"Protocol: {args.num_frames} frames, {args.objects_per_scene} objects/scene, >={args.min_mask_coverage*100:.2g}% coverage")
+    logger.debug(f"Frame sampling: {args.eval_sampling}")
 
     # Category filtering: collect categories across all scenes and filter rare ones
     allowed_categories = None
@@ -142,13 +145,13 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
             spatial_query_map[prompt.lower()] = (qualifier, base)
             base_prompts.add(base.lower())
             if qualifier:
-                ddp.print(f"  Spatial query: '{prompt}' -> qualifier='{qualifier}', base='{base}'")
+                logger.debug(f"  Spatial query: '{prompt}' -> qualifier='{qualifier}', base='{base}'")
         allowed_categories = base_prompts
-        ddp.print(f"Custom prompts filter: {args.custom_prompts}")
-        ddp.print(f"  Base categories for matching: {sorted(base_prompts)}")
+        logger.debug(f"Custom prompts filter: {args.custom_prompts}")
+        logger.debug(f"  Base categories for matching: {sorted(base_prompts)}")
 
     if args.min_category_samples > 1:
-        ddp.print(f"Collecting category statistics for filtering (min {args.min_category_samples} samples)...")
+        logger.debug(f"Collecting category statistics for filtering (min {args.min_category_samples} samples)...")
         from collections import Counter
         category_counts = Counter()
         for scene_id in scene_ids:
@@ -165,25 +168,25 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
                               if count >= args.min_category_samples}
         rare_categories = {cat for cat, count in category_counts.items()
                           if count < args.min_category_samples}
-        ddp.print(f"  Found {len(category_counts)} categories, keeping {len(allowed_categories)} "
-                  f"(filtered {len(rare_categories)} with < {args.min_category_samples} samples)")
+        logger.debug(f"  Found {len(category_counts)} categories, keeping {len(allowed_categories)} "
+                     f"(filtered {len(rare_categories)} with < {args.min_category_samples} samples)")
         if rare_categories:
             examples = sorted(rare_categories)[:5]
-            ddp.print(f"  Filtered examples: {examples}")
+            logger.debug(f"  Filtered examples: {examples}")
 
-    ddp.print(f"Prompt type: {args.prompt_type}")
+    logger.debug(f"Prompt type: {args.prompt_type}")
     if args.prompt_type in ['text_point', 'text_box_point', 'all']:
         if args.sparse_prompts:
-            ddp.print(f"  MV-SAM SPARSE PROMPTING: {args.num_pos_points} pos + {args.num_neg_points} neg = {args.num_pos_points + args.num_neg_points} points TOTAL")
-            ddp.print(f"  Distributed across {args.num_prompted_frames} frames (out of {args.num_frames})")
-            ddp.print(f"  Other frames receive text-only prompts (global semantic context)")
+            logger.debug(f"  MV-SAM SPARSE PROMPTING: {args.num_pos_points} pos + {args.num_neg_points} neg = {args.num_pos_points + args.num_neg_points} points TOTAL")
+            logger.debug(f"  Distributed across {args.num_prompted_frames} frames (out of {args.num_frames})")
+            logger.debug(f"  Other frames receive text-only prompts (global semantic context)")
         else:
-            ddp.print(f"  DENSE PROMPTING: {args.num_pos_points} pos + {args.num_neg_points} neg points PER FRAME")
-            ddp.print(f"  WARNING: This is NOT the MV-SAM protocol. Use --sparse-prompts for fair comparison.")
+            logger.debug(f"  DENSE PROMPTING: {args.num_pos_points} pos + {args.num_neg_points} neg points PER FRAME")
+            logger.debug(f"  WARNING: This is NOT the MV-SAM protocol. Use --sparse-prompts for fair comparison.")
     if args.consistency_metric:
-        ddp.print(f"Computing cross-view consistency (3D centroid variance)")
+        logger.debug(f"Computing cross-view consistency (3D centroid variance)")
     if args.visualize:
-        ddp.print(f"Saving visualizations to: {viz_dir}")
+        logger.info(f"Saving visualizations to: {viz_dir}")
 
     # Setup DA3 cache for depth and poses (one cache provides both)
     # Auto-select val_allframes cache when evaluating on val split
@@ -194,54 +197,54 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
         if 'val' in args.split and not da3_cache_dir.name.endswith('_val_allframes'):
             val_allframes_dir = data_root / f"{args.da3_nested_cache}_val_allframes"
             if val_allframes_dir.exists():
-                ddp.print(f"\n📦 Auto-selecting val_allframes cache for val split")
+                logger.debug(f"Auto-selecting val_allframes cache for val split")
                 da3_cache_dir = val_allframes_dir
         if not da3_cache_dir.exists():
-            ddp.print(f"WARNING: DA3 cache not found at {da3_cache_dir}")
-            ddp.print("         Run 'python scripts/preprocess_da3_nested.py' first.")
-            ddp.print("         DA3 will run live (slower) and estimated poses unavailable.")
+            logger.warning(f"DA3 cache not found at {da3_cache_dir}")
+            logger.warning("         Run 'python scripts/preprocess_da3_nested.py' first.")
+            logger.warning("         DA3 will run live (slower) and estimated poses unavailable.")
             da3_cache_dir = None
             if args.use_estimated_poses:
-                ddp.print("         Falling back to camera-frame evaluation.")
+                logger.warning("         Falling back to camera-frame evaluation.")
                 args.use_estimated_poses = False
         else:
-            ddp.print(f"\n📦 DA3 CACHE: {da3_cache_dir}")
-            ddp.print(f"   Provides: cached depth + estimated poses")
+            logger.info(f"DA3 CACHE: {da3_cache_dir}")
+            logger.debug(f"   Provides: cached depth + estimated poses")
     else:
         if args.baseline_sam3:
-            ddp.print(f"\n⚡ DA3 SKIPPED: Baseline SAM3 mode (no depth needed)")
+            logger.info(f"DA3 SKIPPED: Baseline SAM3 mode (no depth needed)")
         else:
-            ddp.print(f"\n⚡ DA3 LIVE: No --da3-nested-cache specified")
-            ddp.print(f"   DA3 will run live (slower), no estimated poses available")
+            logger.info(f"DA3 LIVE: No --da3-nested-cache specified")
+            logger.debug(f"   DA3 will run live (slower), no estimated poses available")
         if args.use_estimated_poses:
-            ddp.print("   Falling back to camera-frame evaluation.")
+            logger.warning("   Falling back to camera-frame evaluation.")
             args.use_estimated_poses = False
 
     # Load GT data for Procrustes evaluation
     gt_centroids_cache = {}
     gt_poses_cache = {}
     if args.procrustes:
-        ddp.print(f"\n📐 PROCRUSTES EVALUATION: Enabled")
-        ddp.print(f"   Scale estimation: {'7-DoF (with scale)' if args.procrustes_with_scale else '6-DoF (no scale)'}")
+        logger.info(f"PROCRUSTES EVALUATION: Enabled")
+        logger.debug(f"   Scale estimation: {'7-DoF (with scale)' if args.procrustes_with_scale else '6-DoF (no scale)'}")
         gt_centroids_cache = load_gt_centroids(data_root)
         if gt_centroids_cache:
             # Filter to evaluated scenes if scene_ids available
             if scene_ids:
                 gt_centroids_cache = {k: v for k, v in gt_centroids_cache.items() if k in set(scene_ids)}
-            ddp.print(f"   Loaded GT centroids for {len(gt_centroids_cache)} scenes")
+            logger.info(f"   Loaded GT centroids for {len(gt_centroids_cache)} scenes")
         else:
-            ddp.print(f"   WARNING: centroid_cache.json not found - Procrustes disabled")
+            logger.warning(f"   centroid_cache.json not found - Procrustes disabled")
             args.procrustes = False
 
     if args.use_estimated_poses:
-        ddp.print(f"\n📍 POSE-FREE EVALUATION: Using DA3-NESTED estimated poses")
+        logger.info(f"POSE-FREE EVALUATION: Using DA3-NESTED estimated poses")
     elif args.use_world_poses:
-        ddp.print(f"\n📍 WORLD-FRAME EVALUATION: Using GT poses from transforms.json")
+        logger.info(f"WORLD-FRAME EVALUATION: Using GT poses from transforms.json")
     else:
-        ddp.print(f"\n📍 CAMERA-FRAME EVALUATION: Using identity poses (default)")
+        logger.info(f"CAMERA-FRAME EVALUATION: Using identity poses (default)")
 
     if args.compare_pose_sources:
-        ddp.print(f"\n🔬 POSE COMPARISON: Will run both GT and estimated poses")
+        logger.info(f"POSE COMPARISON: Will run both GT and estimated poses")
 
     # Save config (only on main rank)
     config = {
@@ -301,8 +304,8 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
             synonym_prob=args.synonym_prob,
             use_templates=False,  # Keep prompts simple for eval
         )
-        ddp.print(f"\n🔀 Synonym augmentation ENABLED (prob={args.synonym_prob})")
-        ddp.print("   Testing robustness to prompt variations (e.g., 'tap' → 'faucet')")
+        logger.debug(f"Synonym augmentation ENABLED (prob={args.synonym_prob})")
+        logger.debug("   Testing robustness to prompt variations (e.g., 'tap' -> 'faucet')")
 
     # Evaluate - use different mode based on single_prompt flag
     all_results = []
@@ -310,7 +313,7 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
 
     if args.single_prompt:
         # SINGLE-PROMPT MODE: Multi-view batch evaluation
-        print(f"\nSingle-Prompt Propagation Evaluation")
+        logger.info(f"Single-Prompt Propagation Evaluation")
         for scene_id in tqdm(scene_ids, desc="Scenes (single-prompt)"):
             scene_path = data_root / 'data' / scene_id
             semantics_dir = semantics_root / scene_id
@@ -332,15 +335,15 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
             )
 
             if 'error' in result:
-                print(f"  {scene_id}: {result['error']}")
+                logger.info(f"  {scene_id}: {result['error']}")
             else:
                 all_results.append(result)
-                print(f"  {scene_id}: Prompted={100*result['mean_prompted_iou']:.1f}%, "
-                      f"Unprompted={100*result['mean_unprompted_iou']:.1f}%, "
-                      f"Propagation={result['mean_propagation_ratio']:.2f}x")
+                logger.info(f"  {scene_id}: Prompted={100*result['mean_prompted_iou']:.1f}%, "
+                            f"Unprompted={100*result['mean_unprompted_iou']:.1f}%, "
+                            f"Propagation={result['mean_propagation_ratio']:.2f}x")
 
         if not all_results:
-            print("No valid results!")
+            logger.info("No valid results!")
             return
 
         # Compute single-prompt specific metrics
@@ -362,7 +365,7 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
             centroid_errors_world = [r.get('mean_centroid_error_world_m', float('inf')) for r in all_results if r.get('mean_centroid_error_world_m', float('inf')) != float('inf')]
             mean_centroid_error_world = np.mean(centroid_errors_world) if centroid_errors_world else float('inf')
 
-        print("\n" + "="*60)
+        print(); print("="*60)
         print("SINGLE-PROMPT EVALUATION RESULTS")
         print("="*60)
         print(f"Scenes evaluated: {len(all_results)}")
@@ -411,13 +414,13 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
         output_path = output_dir / 'results_single_prompt.json'
         with open(output_path, 'w') as f:
             json.dump(results_dict, f, indent=2)
-        print(f"\nResults saved to {output_path}")
+        logger.info(f"Results saved to {output_path}")
         return
 
     # MULTI-PROMPT MODE: Standard per-frame evaluation (MV-SAM protocol)
-    ddp.print(f"\nStandard Evaluation (prompt_type={args.prompt_type})")
+    logger.info(f"Standard Evaluation (prompt_type={args.prompt_type})")
     if args.prompt_type != 'text_only':
-        ddp.print(f"    Using {args.num_pos_points} positive + {args.num_neg_points} negative points per frame")
+        logger.debug(f"    Using {args.num_pos_points} positive + {args.num_neg_points} negative points per frame")
 
     # Paper viz: ALL ranks collect viz data (will be gathered to rank 0 later)
     collect_viz = (args.paper_viz or args.single_object_viz)
@@ -475,7 +478,7 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
         )
 
         if 'error' in result:
-            print(f"  [rank {ddp.rank}] {scene_id}: {result['error']}")
+            logger.warning(f"  [rank {ddp.rank}] {scene_id}: {result['error']}")
         else:
             all_results.append(result)
 
@@ -507,7 +510,7 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
                 with open(partial_path, 'w') as f:
                     json.dump(partial_summary, f, indent=2, default=lambda x: float(x) if hasattr(x, 'item') else x)
             except Exception as e:
-                print(f"  [rank {ddp.rank}] Warning: failed to save partial results: {e}")
+                logger.warning(f"  [rank {ddp.rank}] Failed to save partial results: {e}")
 
     # Gather results from all ranks
     ddp.barrier()  # Sync before gathering
@@ -539,7 +542,7 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
                 for rank_pool in gathered_viz:
                     if rank_pool:
                         paper_viz_pool.extend(rank_pool)
-                print(f"[Viz] Gathered {len(paper_viz_pool)} viz samples from {ddp.world_size} ranks")
+                logger.info(f"[Viz] Gathered {len(paper_viz_pool)} viz samples from {ddp.world_size} ranks")
 
         if ddp.is_main:
             # Merge results from all ranks
@@ -556,7 +559,7 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
             all_category_metrics = merged_category_metrics
 
     if not all_results:
-        ddp.print("No valid results!")
+        logger.info("No valid results!")
         ddp.cleanup()
         return
 
@@ -637,7 +640,7 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
     total_consistency_objects = sum(r.get('num_consistency_objects', 0) for r in all_results)
     global_consistency_iou = np.mean(valid_consistency) if valid_consistency else None
 
-    print("\n" + "="*70)
+    print(); print("="*70)
     print("EVALUATION RESULTS")
     print("="*70)
     print(f"Scenes evaluated: {len(all_results)}")
@@ -667,7 +670,7 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
 
     # Procrustes-aligned localization 
     if total_procrustes_samples > 0:
-        print(f"📐 Procrustes-aligned Localization (vs GT mesh centroids):")
+        print(f"Procrustes-aligned Localization (vs GT mesh centroids):")
         print(f"  Acc@5cm:        {100*global_procrustes_acc_5cm:.2f}%")
         print(f"  Acc@10cm:       {100*global_procrustes_acc_10cm:.2f}%")
         if global_procrustes_mean_error is not None:
@@ -717,7 +720,7 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
     # Cross-fold analysis (stratified category grouping)
     fold_results = None
     if args.cross_fold and len(global_per_cat_iou) >= args.num_folds:
-        print(f"\n{'='*70}")
+        print(); print("="*70)
         print(f"CROSS-FOLD ANALYSIS ({args.num_folds} folds)")
         print("="*70)
         print("Grouping categories into folds for per-group performance analysis\n")
@@ -835,10 +838,10 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
     output_path = output_dir / 'results.json'
     with open(output_path, 'w') as f:
         json.dump(results_dict, f, indent=2)
-    print(f"\nResults saved to {output_path}")
+    logger.info(f"Results saved to {output_path}")
 
     # Generate plots
-    print("\nGenerating plots...")
+    logger.info("Generating plots...")
 
     if global_per_cat_iou:
         plot_category_iou(global_per_cat_iou, output_dir / 'category_iou.png')
@@ -851,15 +854,15 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
     # Paper-quality grid visualization (ScanNet++ path)
     # Viz data already gathered from all ranks above (before non-main ranks exit)
     if paper_viz_pool and args.paper_viz:
-        print("\nGenerating paper-quality grid visualizations...")
+        logger.info("Generating paper-quality grid visualizations...")
         generate_paper_visualizations(paper_viz_pool, args, output_dir)
 
     # Single-object focused visualization
     if paper_viz_pool and args.single_object_viz:
-        print("\nGenerating single-object focused visualization...")
+        logger.info("Generating single-object focused visualization...")
         generate_single_object_viz(paper_viz_pool, args, output_dir)
 
-    print(f"\nAll outputs saved to: {output_dir}")
+    logger.info(f"All outputs saved to: {output_dir}")
 
     # Cleanup DDP
     ddp.cleanup()
