@@ -44,7 +44,7 @@ git submodule init
 git submodule update --recursive
 ```
 
-This pulls SAM3 and Depth Anything V3.
+This pulls SAM3, Depth Anything V3, and optional benchmarking/pointmap submodules (LERF, LangSplat-V2, MapAnything, Pi3) under `third_party/`. The `third_party/` submodules are only needed for reproducing baselines or using world-frame pointmap alternatives to DA3.
 
 ### 4. Install SAM3
 

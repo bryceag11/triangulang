@@ -52,7 +52,7 @@ A single text prompt replaces the O(N) per-view click annotations required by pr
 | ScanNet++ | uCO3D | **75.7%** |
 | ScanNet++ | NVOS | **93.5%** |
 | ScanNet++ | SPIn-NeRF | **91.4%** |
-| ScanNet++ | LERF-OVS | **58.1%** |
+| ScanNet++ | LERF-OVS | **59.2%** |
 
 Inference speed: ~57ms/frame (5-10 classes) on a single A100.
 
@@ -139,6 +139,26 @@ torchrun --nproc_per_node=8 scripts/utils/preprocess_da3_nested.py \
   --resolution 504 --chunk-size 16
 ```
 
+TrianguLang also supports world-frame pointmaps from [MapAnything](https://github.com/facebookresearch/map-anything) and [Pi3](https://github.com/CWRU-AISM/Pi3_tlang) as alternatives to DA3. Pre-compute the cache and pass `--use-cached-pi3x --pi3x-cache-name <name>` during training/eval to bypass DA3.
+
+## Benchmarking Against LangSplat / LERF
+
+For comparable mIoU numbers on LERF-OVS, run with the LangSplat evaluation protocol:
+
+```bash
+torchrun --nproc_per_node=8 triangulang/evaluation/benchmark.py \
+  --checkpoint checkpoints/my_run/best.pt \
+  --dataset lerf_ovs \
+  --langsplat-protocol --langsplat-thresh 0.4 --loc-kernel-size 29
+```
+
+To reproduce the LangSplat-V2 and LERF baselines directly, we provide forks with rendering fixes as submodules under `third_party/`:
+
+- [`third_party/lerf`](https://github.com/CWRU-AISM/lerf_tlang) -- LERF with fixed eval rendering
+- [`third_party/langsplat_v2`](https://github.com/CWRU-AISM/LangSplatV2_tlang) -- LangSplat-V2 with fixed eval rendering
+
+See each submodule's README for training and evaluation commands.
+
 ## Project Structure
 
 ```
@@ -172,6 +192,11 @@ triangulang/
 │   └── utils/                     # Preprocessing & caching
 ├── sam3/                          # SAM3 submodule
 ├── depth_anything_v3/             # DA3 submodule
+├── third_party/
+│   ├── lerf/                      # LERF fork (benchmarking)
+│   ├── langsplat_v2/              # LangSplat-V2 fork (benchmarking)
+│   ├── map_anything/              # MapAnything (world-frame pointmaps)
+│   └── pi3/                       # Pi3 (world-frame pointmaps)
 ├── setup/                         # Installation scripts
 └── data/                          # Datasets (not included)
 ```

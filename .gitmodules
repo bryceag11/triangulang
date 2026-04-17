@@ -13,3 +13,15 @@
 [submodule "scannetpp_toolkit"]
 	path = scannetpp_toolkit
 	url = https://github.com/scannetpp/scannetpp.git
+[submodule "third_party/lerf"]
+	path = third_party/lerf
+	url = https://github.com/CWRU-AISM/lerf_tlang.git
+[submodule "third_party/langsplat_v2"]
+	path = third_party/langsplat_v2
+	url = https://github.com/CWRU-AISM/LangSplatV2_tlang.git
+[submodule "third_party/map_anything"]
+	path = third_party/map_anything
+	url = https://github.com/CWRU-AISM/map-anything_tlang.git
+[submodule "third_party/pi3"]
+	path = third_party/pi3
+	url = https://github.com/CWRU-AISM/Pi3_tlang.git
