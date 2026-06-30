@@ -28,7 +28,7 @@ from tqdm import tqdm
 
 import triangulang
 from triangulang.utils import scannetpp_io
-from triangulang.utils.scannetpp_base import LABEL_FIXES, normalize_label, get_scenes_dir
+from triangulang.utils.scannetpp_base import LABEL_FIXES, normalize_label, get_scenes_dir  # noqa: F401
 from triangulang.utils.scannetpp_sampling import sample_views
 logger = triangulang.get_logger(__name__)
 
@@ -40,9 +40,9 @@ def _is_main_process():
 try:
     from triangulang.utils.spatial_reasoning import (
         SpatialContext,
-        InstanceSpatialInfo,
+        InstanceSpatialInfo,  # noqa: F401
         build_spatial_context,
-        compute_instance_spatial_info
+        compute_instance_spatial_info  # noqa: F401
     )
     HAS_SPATIAL_CONTEXT = True
 except ImportError:
@@ -56,7 +56,7 @@ except ImportError:
     HAS_TRIMESH = False
 
 try:
-    import open3d as o3d
+    import open3d as o3d  # noqa: F401
     HAS_OPEN3D = True
 except ImportError:
     HAS_OPEN3D = False
@@ -689,7 +689,7 @@ class ScanNetPPMultiViewDataset(Dataset):
                             if oid > 0 and oid in obj_to_label:
                                 if obj_to_label[oid].lower() not in skip_set:
                                     obj_visibility[oid].add(img_name)
-                    except:
+                    except Exception:
                         continue
 
                 img_to_chunk = self._scene_chunk_map.get(scene_id, {})

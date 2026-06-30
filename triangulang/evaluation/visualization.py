@@ -1,6 +1,4 @@
 """Visualization utilities for benchmark results and paper figures."""
-import json
-from collections import defaultdict
 
 import numpy as np
 import torch
@@ -9,8 +7,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from scipy import ndimage
 from pathlib import Path
-from typing import Dict, List, Optional
-from PIL import Image
+from typing import Dict, List
 
 
 # SAM3-style colors for visualization
@@ -264,8 +261,8 @@ def plot_scene_metrics(scene_results: List[Dict], output_path: Path):
 
     fig, ax = plt.subplots(figsize=(max(12, len(scene_names) * 0.8), 6))
 
-    bars1 = ax.bar(x - width/2, mious, width, label='mIoU', color='steelblue')
-    bars2 = ax.bar(x + width/2, recalls, width, label='Recall (mAcc)', color='coral')
+    ax.bar(x - width/2, mious, width, label='mIoU', color='steelblue')
+    ax.bar(x + width/2, recalls, width, label='Recall (mAcc)', color='coral')
 
     ax.set_xlabel('Scene', fontsize=12)
     ax.set_ylabel('Score (%)', fontsize=12)
@@ -402,7 +399,6 @@ def save_visualization(
     plt.close()
 
 
-from triangulang.evaluation.paper_viz import (
-    create_paper_grid, collect_paper_viz_from_results,
-    generate_paper_visualizations, generate_single_object_viz,
+from triangulang.evaluation.paper_viz import (  # noqa: E402
+    generate_paper_visualizations, generate_single_object_viz,  # noqa: F401
 )

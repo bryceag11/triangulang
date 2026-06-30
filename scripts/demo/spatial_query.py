@@ -25,14 +25,14 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / 'sam3'))
 sys.path.insert(0, str(PROJECT_ROOT / 'depth_anything_v3' / 'src'))
 
-from triangulang.utils.spatial_reasoning import (
+from triangulang.utils.spatial_reasoning import (  # noqa: E402
     parse_spatial_qualifier,
     parse_relational_query,
     filter_by_relation,
     get_mask_centroid,
     get_depth_at_centroid,
 )
-from depth_anything_3.utils.visualize import visualize_depth
+from depth_anything_3.utils.visualize import visualize_depth  # noqa: E402
 
 def load_model(checkpoint_path: str, device: str = 'cuda'):
     """Load trained model from checkpoint."""
@@ -182,7 +182,7 @@ def process_relational_query_sequential(model, image_tensor, prompt, device):
     target, reference, relation = parse_relational_query(prompt)
 
     if target is None:
-        logger.info(f"  Not a relational query, falling back to spatial query")
+        logger.info("  Not a relational query, falling back to spatial query")
         return process_spatial_query(model, image_tensor, prompt, device)
 
     logger.info(f"  Parsed: target='{target}', reference='{reference}', relation='{relation}'")
@@ -207,7 +207,7 @@ def process_relational_query_sequential(model, image_tensor, prompt, device):
     logger.info(f"  Found {len(target_masks)} candidate targets")
 
     if len(target_masks) == 0:
-        logger.warning(f"  No target objects found!")
+        logger.warning("  No target objects found!")
         return None, None
 
     # Filter by relation
@@ -226,11 +226,11 @@ def process_relational_query_parallel(model, image_tensor, prompt, device):
     target, reference, relation = parse_relational_query(prompt)
 
     if target is None:
-        logger.info(f"  Not a relational query, falling back to spatial query")
+        logger.info("  Not a relational query, falling back to spatial query")
         return process_spatial_query(model, image_tensor, prompt, device)
 
     logger.info(f"  Parsed: target='{target}', reference='{reference}', relation='{relation}'")
-    logger.info(f"  Using parallel multi-prompt query")
+    logger.info("  Using parallel multi-prompt query")
 
     with torch.no_grad():
         ref_outputs = model(image_tensor, [reference], gt_masks=None)
@@ -247,7 +247,7 @@ def process_relational_query_parallel(model, image_tensor, prompt, device):
     target_masks, target_depths = get_all_masks_nms(model, image_tensor, target, device)
 
     if len(target_masks) == 0:
-        logger.warning(f"  No target objects found!")
+        logger.warning("  No target objects found!")
         return None, None
 
     # Filter by relation
@@ -328,7 +328,7 @@ def main():
     # Check if relational or spatial query
     target, reference, relation = parse_relational_query(args.prompt)
 
-    logger.info(f"Processing query...")
+    logger.info("Processing query...")
     if target is not None:
         # Relational query
         if args.parallel:
@@ -344,10 +344,10 @@ def main():
         from skimage.transform import resize
         mask = resize(mask.astype(float), image_np.shape[:2], order=0) > 0.5
 
-    logger.info(f"Saving visualization...")
+    logger.info("Saving visualization...")
     visualize_result(image_np, mask, depth, args.output, args.prompt)
 
-    print(f"\nDone!")
+    print("\nDone!")
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, format='%(message)s')

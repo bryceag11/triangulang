@@ -109,7 +109,7 @@ def load_colmap_intrinsics(sparse_dir: Path) -> Optional[Dict]:
                     'params': params,
                 }
         return cameras
-    except:
+    except Exception:
         return None
 
 

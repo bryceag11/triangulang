@@ -10,16 +10,16 @@ import triangulang
 import torch
 
 logger = triangulang.get_logger(__name__)
-import torch.nn.functional as F
-from torch.amp import autocast
-from triangulang.losses.segmentation import (
+import torch.nn.functional as F  # noqa: E402
+from torch.amp import autocast  # noqa: E402
+from triangulang.losses.segmentation import (  # noqa: E402
     focal_loss, dice_loss, align_loss, contrastive_mask_loss, centroid_loss,
 )
-from triangulang.utils.metrics import (
+from triangulang.utils.metrics import (  # noqa: E402
     compute_iou, compute_recall, compute_mean_accuracy,
     compute_per_mask_ious, compute_gt_centroid,
 )
-from triangulang.training.forward_passes_common import (
+from triangulang.training.forward_passes_common import (  # noqa: E402
     connect_aux_heads_to_graph, connect_trainable_params_to_graph, get_norm_scale,
 )
 

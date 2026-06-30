@@ -447,8 +447,8 @@ class SpatialAugmentor:
         )
 
 
-from triangulang.utils.spatial_context import (
-    InstanceSpatialInfo, SpatialContext,
-    compute_instance_spatial_info, get_true_spatial_qualifiers,
-    generate_relational_query, GTAwareSpatialAugmentor, build_spatial_context,
+from triangulang.utils.spatial_context import (  # noqa: E402
+    InstanceSpatialInfo, SpatialContext,  # noqa: F401
+    compute_instance_spatial_info, get_true_spatial_qualifiers,  # noqa: F401
+    generate_relational_query, GTAwareSpatialAugmentor, build_spatial_context,  # noqa: F401
 )

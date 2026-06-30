@@ -4,10 +4,7 @@ import random
 from collections import defaultdict
 
 import numpy as np
-import torch
-import torch.nn.functional as F
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
 from pathlib import Path
 from typing import Dict, List, Optional
 from PIL import Image
@@ -15,7 +12,7 @@ import triangulang
 
 logger = triangulang.get_logger(__name__)
 
-from triangulang.evaluation.visualization import MASK_COLORS, overlay_mask_sam3_style, render_mask_standalone
+from triangulang.evaluation.visualization import MASK_COLORS, overlay_mask_sam3_style, render_mask_standalone  # noqa: E402
 
 # Paper-Quality Grid Visualization
 
@@ -43,7 +40,6 @@ def create_paper_grid(
     """
     n_rows = len(rows)
     n_cols = 5
-    col_headers = ['Image', 'Depth', 'GT Mask', 'Pred Mask', 'Overlay']
 
     # Extra vertical space for column header row
     header_height_inches = 0.4
@@ -58,7 +54,6 @@ def create_paper_grid(
         img = row_data['image']
         gt = row_data['gt_mask']
         pred = row_data['pred_mask']
-        label = row_data.get('label', '')
         depth = row_data.get('depth', None)
 
         # Resize masks to image resolution if needed
@@ -466,7 +461,7 @@ def generate_single_object_viz(
         if target_objects:
             objects_to_viz = [obj for obj in target_objects if obj in by_label]
             if not objects_to_viz:
-                logger.info(f"    No target objects found, skipping scene")
+                logger.info("    No target objects found, skipping scene")
                 continue
         else:
             # Pick objects with BEST IoU for this scene
@@ -596,12 +591,12 @@ def generate_single_object_viz(
 
     # Also save a summary table
     summary_lines = [
-        f"Single Object Visualization Summary",
-        f"=" * 50,
+        "Single Object Visualization Summary",
+        "=" * 50,
         f"Scenes: {all_metadata['num_scenes']}",
         f"Top-K per object: {topk}",
         f"Objects per scene: {num_objects}",
-        f"",
+        "",
     ]
     for scene_meta in all_metadata['scenes']:
         summary_lines.append(f"\n{'='*50}")

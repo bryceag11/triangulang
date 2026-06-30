@@ -25,17 +25,17 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / 'sam3'))
 sys.path.insert(0, str(PROJECT_ROOT / 'depth_anything_v3' / 'src'))
 
-from sam3 import build_sam3_image_model
-from triangulang.utils.ddp_utils import DDPManager
-from triangulang.evaluation.config import BenchmarkConfig
-from triangulang.evaluation.data_loading import (
+from sam3 import build_sam3_image_model  # noqa: E402
+from triangulang.utils.ddp_utils import DDPManager  # noqa: E402
+from triangulang.evaluation.config import BenchmarkConfig  # noqa: E402
+from triangulang.evaluation.data_loading import (  # noqa: E402
     BaselineSAM3Wrapper, count_parameters, load_model,
 )
-from triangulang.evaluation.eval_lerf import _evaluate_lerf
-from triangulang.evaluation.eval_scannetpp import _evaluate_scannetpp
-from triangulang.evaluation.eval_datasets import _evaluate_uco3d, _evaluate_nvos
-from triangulang import BPE_PATH as _BPE_PATH
-import triangulang
+from triangulang.evaluation.eval_lerf import _evaluate_lerf  # noqa: E402
+from triangulang.evaluation.eval_scannetpp import _evaluate_scannetpp  # noqa: E402
+from triangulang.evaluation.eval_datasets import _evaluate_uco3d, _evaluate_nvos  # noqa: E402
+from triangulang import BPE_PATH as _BPE_PATH  # noqa: E402
+import triangulang  # noqa: E402
 
 logger = triangulang.get_logger(__name__)
 
@@ -93,7 +93,7 @@ def main():
         if args.mask_size is None:
             args.mask_size = (args.image_size // 14) * 4
         sam3_res = math.ceil(args.image_size / 14) * 14
-        logger.info(f"Loading baseline SAM3 (native decoder, no GASA/depth/cross-view)...")
+        logger.info("Loading baseline SAM3 (native decoder, no GASA/depth/cross-view)...")
         logger.info(f"  SAM3 img_size={sam3_res} (from --image-size {args.image_size})")
         sam3_model = build_sam3_image_model(bpe_path=_BPE_PATH, img_size=sam3_res).to(device)
         model = BaselineSAM3Wrapper(sam3_model, resolution=sam3_res)
@@ -121,7 +121,7 @@ def main():
                 train_config = json.load(f)
             if train_config.get('use_spatial_tokens', False) and not args.spatial_eval and not args.no_spatial_eval:
                 args.spatial_eval = True
-                logger.info(f"  Auto-enabled --spatial-eval")
+                logger.info("  Auto-enabled --spatial-eval")
             if args.no_spatial_eval:
                 args.spatial_eval = False
 

@@ -12,7 +12,7 @@ from depth_anything_3.api import DepthAnything3
 from triangulang.models.triangulang_model import TrianguLangModel
 from triangulang.utils.lora import LoRAManager, LoRALayer
 from triangulang.utils.scannetpp_loader import normalize_label, is_excluded_frame
-from triangulang.evaluation.baseline_sam3 import BaselineSAM3Wrapper  # re-exported for callers
+from triangulang.evaluation.baseline_sam3 import BaselineSAM3Wrapper  # re-exported for callers  # noqa: F401
 from triangulang import BPE_PATH as _BPE_PATH
 import triangulang
 
@@ -58,7 +58,7 @@ def load_model(checkpoint_path: str, device: str = 'cuda', da3_resolution: int =
             config = json.load(f)
         logger.info(f"Loaded config from {config_path}")
     else:
-        logger.warning(f"Config not found, using defaults!")
+        logger.warning("Config not found, using defaults!")
 
     effective_da3_res = da3_resolution if da3_resolution is not None else (config.get('da3_resolution') or 504)
     logger.debug(f"Config: use_box_prompts={config.get('use_box_prompts', False)}, "
@@ -164,11 +164,11 @@ def load_model(checkpoint_path: str, device: str = 'cuda', da3_resolution: int =
             logger.info("Skipping trained SAM3 seghead (--skip-trained-seghead), using default SAM3 weights")
         else:
             model.sam3.segmentation_head.load_state_dict(checkpoint['sam3_seghead'])
-            logger.info(f"Loaded trained SAM3 seghead from checkpoint")
+            logger.info("Loaded trained SAM3 seghead from checkpoint")
 
     if 'mask_embed' in checkpoint and checkpoint['mask_embed'] is not None:
         model.sam3.segmentation_head.mask_predictor.mask_embed.load_state_dict(checkpoint['mask_embed'])
-        logger.info(f"Loaded trained mask_embed from checkpoint")
+        logger.info("Loaded trained mask_embed from checkpoint")
 
     if 'lora' in checkpoint and checkpoint['lora'] is not None:
         lora_rank = config.get('lora_rank', 8)
@@ -197,7 +197,7 @@ def load_model(checkpoint_path: str, device: str = 'cuda', da3_resolution: int =
     model.sam3_multi_object = config.get('sam3_multi_object', False)
     model.multi_object = config.get('multi_object', False)
     if model.sam3_multi_object:
-        logger.info(f"SAM3 multi-object mode: ENABLED (batch expansion)")
+        logger.info("SAM3 multi-object mode: ENABLED (batch expansion)")
 
     model.config = config  # Store for downstream use
     model.eval()

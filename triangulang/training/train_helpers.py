@@ -3,34 +3,34 @@ import warnings
 # Suppress PyTorch scheduler deprecation warning (internal to SequentialLR)
 warnings.filterwarnings('ignore', message='.*epoch parameter in.*scheduler.step.*')
 
-import cv2
+import cv2  # noqa: E402
 cv2.setNumThreads(0)
 cv2.ocl.setUseOpenCL(False)
 
-import sys
-import random
-from pathlib import Path
+import sys  # noqa: E402
+import random  # noqa: E402
+from pathlib import Path  # noqa: E402
 
-import torch
-import torch.nn.functional as F
-import numpy as np
-import matplotlib
+import torch  # noqa: E402
+import torch.nn.functional as F  # noqa: E402
+import numpy as np  # noqa: E402
+import matplotlib  # noqa: E402
 matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-from PIL import Image as PILImage
+import matplotlib.pyplot as plt  # noqa: E402
+import matplotlib.patches as patches  # noqa: E402
+from PIL import Image as PILImage  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / 'sam3'))
 sys.path.insert(0, str(PROJECT_ROOT / 'depth_anything_v3' / 'src'))
 
-from depth_anything_3.utils.visualize import visualize_depth
+from depth_anything_3.utils.visualize import visualize_depth  # noqa: E402
 
-from triangulang.utils.metrics import (
+from triangulang.utils.metrics import (  # noqa: E402
     CategoryMetricsTracker, compute_iou, compute_recall, compute_mean_accuracy,
 )
-from triangulang.losses.segmentation import focal_loss, dice_loss
+from triangulang.losses.segmentation import focal_loss, dice_loss  # noqa: E402
 
 
 def set_seed(seed: int, rank: int = 0):

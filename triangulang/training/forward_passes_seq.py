@@ -10,20 +10,20 @@ import triangulang
 import torch
 
 logger = triangulang.get_logger(__name__)
-import torch.nn.functional as F
-from torch.amp import autocast
-from triangulang.losses.segmentation import (
+import torch.nn.functional as F  # noqa: E402
+from torch.amp import autocast  # noqa: E402
+from triangulang.losses.segmentation import (  # noqa: E402
     focal_loss, dice_loss, align_loss, contrastive_mask_loss,
     centroid_loss, boundary_loss,
 )
-from triangulang.losses.sheaf_losses import AsymmetricRestrictionSheaf
-from triangulang.losses.spatial_losses import spatial_ranking_loss, spatial_selection_loss
-from triangulang.utils.metrics import (
+from triangulang.losses.sheaf_losses import AsymmetricRestrictionSheaf  # noqa: E402
+from triangulang.losses.spatial_losses import spatial_ranking_loss, spatial_selection_loss  # noqa: E402
+from triangulang.utils.metrics import (  # noqa: E402
     compute_iou, compute_recall, compute_mean_accuracy,
     compute_per_mask_ious, compute_gt_centroid,
 )
-from triangulang.utils.matching import hungarian_match, text_greedy_match
-from triangulang.training.forward_passes_common import (
+from triangulang.utils.matching import hungarian_match, text_greedy_match  # noqa: E402
+from triangulang.training.forward_passes_common import (  # noqa: E402
     connect_trainable_params_to_graph, smooth_mask_logits, get_norm_scale,
 )
 
@@ -56,8 +56,8 @@ def _compute_sheaf_loss(sheaf_loss_fn, feature_sheaf_loss_fn, sheaf_preds, sheaf
                 if sheaf_loss_fn._failure_count <= 3:
                     traceback.print_exc()
                 if sheaf_loss_fn._failure_count == 10:
-                    print(f"  [SHEAF ERROR] 10 consecutive failures. Sheaf loss may not be working. "
-                          f"Check world_pointmaps and correspondence quality.")
+                    print("  [SHEAF ERROR] 10 consecutive failures. Sheaf loss may not be working. "
+                          "Check world_pointmaps and correspondence quality.")
 
     if feature_sheaf_loss_fn is not None and len(sheaf_embeddings) >= 2 and len(sheaf_pointmaps) >= 2:
         try:

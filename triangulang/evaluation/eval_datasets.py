@@ -1,13 +1,10 @@
 """Dataset-specific evaluation: uCO3D, NVOS."""
 import json
-import time
 import traceback
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.amp import autocast
-from pathlib import Path
-from typing import Dict, List, Optional
 from collections import defaultdict
 from tqdm import tqdm
 from datetime import datetime
@@ -16,16 +13,13 @@ import triangulang
 
 logger = triangulang.get_logger(__name__)
 
-from triangulang.data.dataset_factory import get_dataset, get_dataset_config
-from triangulang.data.uco3d_dataset import UCO3DMultiViewDataset
-from triangulang.data.uco3d_factory import create_uco3d_eval_dataset
-from triangulang.data.nvos_dataset import NVOSDataset, NVOS_PROMPTS
-from triangulang.utils.spatial_reasoning import parse_spatial_qualifier, get_spatial_qualifier_idx
-from triangulang.evaluation.eval_utils import print_cross_fold_analysis
-from triangulang.evaluation.eval_with_dataset import evaluate_with_dataset
-from triangulang.evaluation.visualization import (
-    plot_category_iou, plot_summary,
-    generate_paper_visualizations, generate_single_object_viz,
+from triangulang.data.uco3d_factory import create_uco3d_eval_dataset  # noqa: E402
+from triangulang.data.nvos_dataset import NVOSDataset  # noqa: E402
+from triangulang.utils.spatial_reasoning import parse_spatial_qualifier, get_spatial_qualifier_idx  # noqa: E402
+from triangulang.evaluation.eval_utils import print_cross_fold_analysis  # noqa: E402
+from triangulang.evaluation.eval_with_dataset import evaluate_with_dataset  # noqa: E402
+from triangulang.evaluation.visualization import (  # noqa: E402
+    generate_paper_visualizations,
 )
 
 
@@ -37,27 +31,27 @@ def _evaluate_uco3d(model, args, device, ddp, data_root, output_dir, viz_dir, to
         args.per_frame = True
         per_frame_default = True
 
-    logger.info(f"uCO3D Evaluation")
-    logger.debug(f"Using UCO3DMultiViewDataset with:")
-    logger.debug(f"  - 50 representative sequences")
-    logger.debug(f"  - 50 frames per sequence (uniformly sampled)")
-    logger.debug(f"  - Category name as text prompt")
+    logger.info("uCO3D Evaluation")
+    logger.debug("Using UCO3DMultiViewDataset with:")
+    logger.debug("  - 50 representative sequences")
+    logger.debug("  - 50 frames per sequence (uniformly sampled)")
+    logger.debug("  - Category name as text prompt")
     logger.debug(f"  - Prompt normalization: {args.normalize_prompts}")
     num_seq = args.num_sequences if args.num_sequences else 50
     frames_per_seq = args.frames_per_sequence if args.frames_per_sequence else 50
     logger.debug(f"  - Sequences: {num_seq}" + (" (paper default)" if args.num_sequences is None else ""))
     logger.debug(f"  - Frames/sequence: {frames_per_seq}" + (" (paper default)" if args.frames_per_sequence is None else ""))
     if per_frame_default:
-        logger.debug(f"  - Per-frame mode (default for uCO3D, use --view-chunk-size N for cross-view)")
+        logger.debug("  - Per-frame mode (default for uCO3D, use --view-chunk-size N for cross-view)")
     elif args.per_frame:
-        logger.debug(f"  - Per-frame mode (explicit)")
+        logger.debug("  - Per-frame mode (explicit)")
     else:
         logger.debug(f"  - Chunked mode with view-chunk-size={args.view_chunk_size}")
     if getattr(args, 'batch_da3', False):
         da3_cs = args.view_chunk_size if args.view_chunk_size > 0 else 16
         logger.debug(f"  - Batched DA3: enabled (chunk-size={da3_cs})")
-        logger.debug(f"    -> DA3 processes views together for cross-view depth consistency")
-        logger.debug(f"    -> Segmentation still runs per-frame (faster eval)")
+        logger.debug("    -> DA3 processes views together for cross-view depth consistency")
+        logger.debug("    -> Segmentation still runs per-frame (faster eval)")
 
     # Create evaluation dataset with configurable sequences/frames
     # If --fold is specified, use k-fold CV splitting
@@ -153,11 +147,11 @@ def _evaluate_uco3d(model, args, device, ddp, data_root, output_dir, viz_dir, to
 
 
 def _evaluate_nvos(model, args, device, ddp, data_root, output_dir, viz_dir):
-    logger.info(f"NVOS Evaluation")
+    logger.info("NVOS Evaluation")
     if args.baseline_sam3:
-        logger.info(f"  Mode: BASELINE SAM3 (native decoder, no GASA/depth/cross-view)")
-    logger.debug(f"  7 scenes from LLFF (orchid excluded)")
-    logger.debug(f"  Metric: IoU on target frame (single-frame, text-only)")
+        logger.info("  Mode: BASELINE SAM3 (native decoder, no GASA/depth/cross-view)")
+    logger.debug("  7 scenes from LLFF (orchid excluded)")
+    logger.debug("  Metric: IoU on target frame (single-frame, text-only)")
 
     # Resolve image size
     resolution = args.image_size or model.resolution
@@ -287,7 +281,7 @@ def _evaluate_nvos(model, args, device, ddp, data_root, output_dir, viz_dir):
         print("="*50)
         print(f"  Sample mIoU: {mean_iou:.2f}%")
         print(f"  Scene  mIoU: {scene_mean_iou:.2f}%")
-        print(f"  Per-scene IoU:")
+        print("  Per-scene IoU:")
         for scene, siou in sorted(per_scene.items()):
             print(f"    {scene:20s}: {siou:.2f}%")
 

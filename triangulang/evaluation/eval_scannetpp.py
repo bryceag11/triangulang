@@ -1,39 +1,31 @@
 """ScanNet++ scene-based evaluation."""
 import json
-import time
-import pickle
 import random
 import numpy as np
-import torch
 import torch.distributed as dist
-from pathlib import Path
-from typing import Dict, List, Optional
 from collections import defaultdict, Counter
 from tqdm import tqdm
 from datetime import datetime
-import matplotlib.pyplot as plt
 import triangulang
 
 logger = triangulang.get_logger(__name__)
 
-from triangulang.evaluation.eval_utils import (
-    compute_spatial_gt, print_results_table, print_localization_block,
+from triangulang.evaluation.eval_utils import (  # noqa: E402
+    print_results_table, print_localization_block,
     print_top_bottom_categories, print_cross_fold_analysis,
 )
-from triangulang.evaluation.data_loading import (
-    load_gt_centroids, load_gt_poses_for_scene,
+from triangulang.evaluation.data_loading import (  # noqa: E402
+    load_gt_centroids,
 )
-from triangulang.evaluation.visualization import (
-    MASK_COLORS, create_comparison_grid, create_multi_object_viz,
+from triangulang.evaluation.visualization import (  # noqa: E402
     plot_category_iou, plot_scene_metrics, plot_summary,
     generate_paper_visualizations, generate_single_object_viz,
 )
-from triangulang.utils.scannetpp_loader import SCANNETPP_SKIP_LABELS, normalize_label
-from triangulang.utils.spatial_reasoning import parse_spatial_qualifier
-from triangulang.utils.prompt_augmentor import PromptAugmentor
-from triangulang.evaluation.eval_scene import evaluate_scene
-from triangulang.evaluation.eval_single_prompt import evaluate_scene_single_prompt
-from triangulang.evaluation.data_loading import load_scene_data
+from triangulang.utils.scannetpp_loader import normalize_label  # noqa: E402
+from triangulang.utils.spatial_reasoning import parse_spatial_qualifier  # noqa: E402
+from triangulang.utils.prompt_augmentor import PromptAugmentor  # noqa: E402
+from triangulang.evaluation.eval_scene import evaluate_scene  # noqa: E402
+from triangulang.evaluation.eval_single_prompt import evaluate_scene_single_prompt  # noqa: E402
 
 
 def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir, total_params, trainable_params, gasa_params):
@@ -111,8 +103,8 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
             # Default: use first N scenes alphabetically
             scene_ids = scene_ids[:num_viz_scenes]
             logger.info(f"[single-object-viz] Using first {len(scene_ids)} scene(s): {scene_ids}")
-            logger.debug(f"    Tip: Use --viz-random-scene for random selection")
-            logger.debug(f"    Tip: Use --viz-num-scenes N for multiple scenes")
+            logger.debug("    Tip: Use --viz-random-scene for random selection")
+            logger.debug("    Tip: Use --viz-num-scenes N for multiple scenes")
     elif args.max_scenes:
         scene_ids = scene_ids[:args.max_scenes]
 
@@ -130,10 +122,10 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
     logger.info(f"Evaluating on {total_scenes} scenes from {args.split}...")
     if args.single_prompt:
         logger.info(f"Mode: SINGLE-PROMPT (prompt view {args.prompt_view}, measure other views)")
-        logger.debug(f"  This is our key differentiator from MV-SAM!")
-        logger.debug(f"  Uses cross-view attention to propagate understanding.")
+        logger.debug("  This is our key differentiator from MV-SAM!")
+        logger.debug("  Uses cross-view attention to propagate understanding.")
     else:
-        logger.info(f"Mode: MULTI-PROMPT (prompt all views)")
+        logger.info("Mode: MULTI-PROMPT (prompt all views)")
     logger.debug(f"Protocol: {args.num_frames} frames, {args.objects_per_scene} objects/scene, >={args.min_mask_coverage*100:.2g}% coverage")
     logger.debug(f"Frame sampling: {args.eval_sampling}")
 
@@ -186,12 +178,12 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
         if args.sparse_prompts:
             logger.debug(f"  MV-SAM SPARSE PROMPTING: {args.num_pos_points} pos + {args.num_neg_points} neg = {args.num_pos_points + args.num_neg_points} points TOTAL")
             logger.debug(f"  Distributed across {args.num_prompted_frames} frames (out of {args.num_frames})")
-            logger.debug(f"  Other frames receive text-only prompts (global semantic context)")
+            logger.debug("  Other frames receive text-only prompts (global semantic context)")
         else:
             logger.debug(f"  DENSE PROMPTING: {args.num_pos_points} pos + {args.num_neg_points} neg points PER FRAME")
-            logger.debug(f"  WARNING: This is NOT the MV-SAM protocol. Use --sparse-prompts for fair comparison.")
+            logger.debug("  WARNING: This is NOT the MV-SAM protocol. Use --sparse-prompts for fair comparison.")
     if args.consistency_metric:
-        logger.debug(f"Computing cross-view consistency (3D centroid variance)")
+        logger.debug("Computing cross-view consistency (3D centroid variance)")
     if args.visualize:
         logger.info(f"Saving visualizations to: {viz_dir}")
 
@@ -204,7 +196,7 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
         if 'val' in args.split and not da3_cache_dir.name.endswith('_val_allframes'):
             val_allframes_dir = data_root / f"{args.da3_nested_cache}_val_allframes"
             if val_allframes_dir.exists():
-                logger.debug(f"Auto-selecting val_allframes cache for val split")
+                logger.debug("Auto-selecting val_allframes cache for val split")
                 da3_cache_dir = val_allframes_dir
         if not da3_cache_dir.exists():
             logger.warning(f"DA3 cache not found at {da3_cache_dir}")
@@ -216,22 +208,21 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
                 args.use_estimated_poses = False
         else:
             logger.info(f"DA3 CACHE: {da3_cache_dir}")
-            logger.debug(f"   Provides: cached depth + estimated poses")
+            logger.debug("   Provides: cached depth + estimated poses")
     else:
         if args.baseline_sam3:
-            logger.info(f"DA3 SKIPPED: Baseline SAM3 mode (no depth needed)")
+            logger.info("DA3 SKIPPED: Baseline SAM3 mode (no depth needed)")
         else:
-            logger.info(f"DA3 LIVE: No --da3-nested-cache specified")
-            logger.debug(f"   DA3 will run live (slower), no estimated poses available")
+            logger.info("DA3 LIVE: No --da3-nested-cache specified")
+            logger.debug("   DA3 will run live (slower), no estimated poses available")
         if args.use_estimated_poses:
             logger.warning("   Falling back to camera-frame evaluation.")
             args.use_estimated_poses = False
 
     # Load GT data for Procrustes evaluation
     gt_centroids_cache = {}
-    gt_poses_cache = {}
     if args.procrustes:
-        logger.info(f"PROCRUSTES EVALUATION: Enabled")
+        logger.info("PROCRUSTES EVALUATION: Enabled")
         logger.debug(f"   Scale estimation: {'7-DoF (with scale)' if args.procrustes_with_scale else '6-DoF (no scale)'}")
         gt_centroids_cache = load_gt_centroids(data_root)
         if gt_centroids_cache:
@@ -240,18 +231,18 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
                 gt_centroids_cache = {k: v for k, v in gt_centroids_cache.items() if k in set(scene_ids)}
             logger.info(f"   Loaded GT centroids for {len(gt_centroids_cache)} scenes")
         else:
-            logger.warning(f"   centroid_cache.json not found - Procrustes disabled")
+            logger.warning("   centroid_cache.json not found - Procrustes disabled")
             args.procrustes = False
 
     if args.use_estimated_poses:
-        logger.info(f"POSE-FREE EVALUATION: Using DA3-NESTED estimated poses")
+        logger.info("POSE-FREE EVALUATION: Using DA3-NESTED estimated poses")
     elif args.use_world_poses:
-        logger.info(f"WORLD-FRAME EVALUATION: Using GT poses from transforms.json")
+        logger.info("WORLD-FRAME EVALUATION: Using GT poses from transforms.json")
     else:
-        logger.info(f"CAMERA-FRAME EVALUATION: Using identity poses (default)")
+        logger.info("CAMERA-FRAME EVALUATION: Using identity poses (default)")
 
     if args.compare_pose_sources:
-        logger.info(f"POSE COMPARISON: Will run both GT and estimated poses")
+        logger.info("POSE COMPARISON: Will run both GT and estimated poses")
 
     # Save config (only on main rank)
     config = {
@@ -320,7 +311,7 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
 
     if args.single_prompt:
         # SINGLE-PROMPT MODE: Multi-view batch evaluation
-        logger.info(f"Single-Prompt Propagation Evaluation")
+        logger.info("Single-Prompt Propagation Evaluation")
         for scene_id in tqdm(scene_ids, desc="Scenes (single-prompt)"):
             scene_path = data_root / 'data' / scene_id
             semantics_dir = semantics_root / scene_id
@@ -381,17 +372,17 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
         print(f"Mean Unprompted IoU:  {100*mean_unprompted:.2f}%")
         print(f"Propagation Ratio:    {mean_propagation:.2f}x")
         print("-"*60)
-        print(f"3D Localization (prediction frame):")
+        print("3D Localization (prediction frame):")
         print(f"  Acc@5cm:            {100*mean_acc_5cm:.1f}%")
         print(f"  Acc@10cm:           {100*mean_acc_10cm:.1f}%")
         print(f"  Mean Error:         {mean_centroid_error*100:.1f} cm")
         if has_world_metrics:
-            print(f"3D Localization (world frame, GT poses reference):")
+            print("3D Localization (world frame, GT poses reference):")
             print(f"  Acc@5cm (world):    {100*mean_acc_5cm_world:.1f}%")
             print(f"  Acc@10cm (world):   {100*mean_acc_10cm_world:.1f}%")
             print(f"  Mean Error (world): {mean_centroid_error_world*100:.1f} cm")
         print("-"*60)
-        print(f"  (Propagation > 0.8 means good cross-view transfer)")
+        print("  (Propagation > 0.8 means good cross-view transfer)")
         print("="*60)
 
         results_dict = {
@@ -523,8 +514,6 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
 
     if ddp.is_distributed:
         # Serialize results for gathering
-        local_results_bytes = pickle.dumps(all_results)
-        local_metrics_bytes = pickle.dumps(dict(all_category_metrics))
 
         # Gather all results to rank 0
         if ddp.is_main:
@@ -669,7 +658,7 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
 
     # Procrustes-aligned localization 
     if total_procrustes_samples > 0:
-        print(f"Procrustes-aligned Localization (vs GT mesh centroids):")
+        print("Procrustes-aligned Localization (vs GT mesh centroids):")
         print(f"  Acc@5cm:        {100*global_procrustes_acc_5cm:.2f}%")
         print(f"  Acc@10cm:       {100*global_procrustes_acc_10cm:.2f}%")
         if global_procrustes_mean_error is not None:
@@ -680,12 +669,11 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
         print("-"*60)
     # Spatial eval metrics
     if args.spatial_eval:
-        spatial_results = [r for r in all_results if r.get('spatial_miou') is not None]
         spatial_per_cat = {cat: np.mean(m['iou']) for cat, m in all_category_metrics.items()
                           if m['iou'] and cat.split()[0].lower() in spatial_qualifiers_set}
         spatial_global_miou = np.mean(list(spatial_per_cat.values())) if spatial_per_cat else 0.0
         total_spatial_queries = sum(r.get('spatial_num_queries', 0) for r in all_results)
-        print(f"Spatial Language Evaluation:")
+        print("Spatial Language Evaluation:")
         print(f"  Spatial mIoU:    {100*spatial_global_miou:.2f}%")
         print(f"  Spatial queries: {total_spatial_queries} ({len(spatial_per_cat)} unique)")
         if spatial_per_cat:
@@ -697,7 +685,7 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
         print("-"*60)
     # Cross-view consistency metric
     if global_consistency_iou is not None:
-        print(f"Cross-View Consistency:")
+        print("Cross-View Consistency:")
         print(f"  Consistency IoU: {100*global_consistency_iou:.2f}%")
         print(f"  Objects:         {total_consistency_objects}")
         print("-"*60)

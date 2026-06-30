@@ -1,44 +1,26 @@
 """Single-prompt evaluation: multiview and scene-level."""
-import time
 import math
 import random
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.amp import autocast
-from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
-from collections import defaultdict
-from tqdm import tqdm
 from PIL import Image
 
 from sam3.model.geometry_encoders import Prompt
 from sam3.model.data_misc import FindStage
 from triangulang.models.triangulang_model import TrianguLangModel
 from triangulang.models.model_utils import run_sam3_proper_heads
-from triangulang.utils.prompt_augmentor import PromptAugmentor
-from triangulang.utils.scannetpp_loader import normalize_label, is_excluded_frame, SCANNETPP_SKIP_LABELS
-from triangulang.utils.spatial_reasoning import (
-    get_mask_centroid, get_depth_at_centroid,
-    parse_spatial_qualifier, get_spatial_qualifier_idx,
-)
-from triangulang.models.sheaf_embeddings import compute_3d_localization, format_localization_text
+from triangulang.utils.scannetpp_loader import SCANNETPP_SKIP_LABELS
 from triangulang.evaluation.eval_utils import (
-    create_prompts_from_gt, compute_metrics, compute_oracle_iou,
-    compute_3d_centroid, compute_centroid_error, umeyama_alignment,
-    compute_cross_view_consistency, compute_spatial_gt,
+    compute_3d_centroid, compute_centroid_error, compute_cross_view_consistency,
 )
 from triangulang.evaluation.data_loading import (
     load_scene_data, load_gt_masks, load_gt_poses, get_frame_extrinsics,
-    load_cached_da3_nested, load_gt_centroids, load_gt_poses_for_scene,
+    load_cached_da3_nested,
 )
-from triangulang.evaluation.visualization import (
-    MASK_COLORS, overlay_mask_sam3_style,
-    save_visualization, generate_paper_visualizations, generate_single_object_viz,
-)
-from triangulang.data.dataset_factory import get_dataset, get_dataset_config
-from triangulang.utils.metrics import compute_gt_centroid as compute_gt_centroid_util
 
 
 
@@ -186,7 +168,6 @@ def evaluate_multiview_single_prompt(
                 pts_flat = torch.cat([pts_flat, pad], dim=0)
         all_pointmaps_list.append(pts_flat)
 
-    all_pointmaps = torch.cat(all_pointmaps_list, dim=0).unsqueeze(0)  # [1, N*L, 3]
 
     # 5. Get text embedding (all N copies are identical, take first)
     text_embedding = backbone_out.get('language_features', None)

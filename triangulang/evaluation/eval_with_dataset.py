@@ -1,6 +1,4 @@
 """Dataset-based evaluation (uCO3D, SpinNeRF, etc.)."""
-import time
-import random
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -9,43 +7,28 @@ from torch.amp import autocast
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional
 from collections import defaultdict
 from tqdm import tqdm
-from PIL import Image
 import triangulang
 
 logger = triangulang.get_logger(__name__)
 
-from triangulang.models.triangulang_model import TrianguLangModel
-from triangulang.utils.prompt_augmentor import PromptAugmentor
-from triangulang.utils.scannetpp_loader import normalize_label, is_excluded_frame, SCANNETPP_SKIP_LABELS
-from triangulang.utils.spatial_reasoning import (
-    get_mask_centroid, get_depth_at_centroid,
+from triangulang.models.triangulang_model import TrianguLangModel  # noqa: E402
+from triangulang.utils.spatial_reasoning import (  # noqa: E402
     parse_spatial_qualifier, get_spatial_qualifier_idx,
 )
-from triangulang.models.sheaf_embeddings import compute_3d_localization, format_localization_text
-from triangulang.evaluation.eval_utils import (
-    create_prompts_from_gt, compute_metrics, compute_oracle_iou,
-    compute_3d_centroid, compute_centroid_error, umeyama_alignment,
-    compute_cross_view_consistency, compute_spatial_gt,
+from triangulang.evaluation.eval_utils import (  # noqa: E402
+    create_prompts_from_gt, compute_oracle_iou,
     print_results_table, print_localization_block, print_top_bottom_categories,
 )
-from triangulang.evaluation.data_loading import (
-    load_scene_data, load_gt_masks, load_gt_poses, get_frame_extrinsics,
-    load_cached_da3_nested, load_gt_centroids, load_gt_poses_for_scene,
+from triangulang.evaluation.visualization import (  # noqa: E402
+    save_visualization,
 )
-from triangulang.evaluation.visualization import (
-    MASK_COLORS, overlay_mask_sam3_style,
-    save_visualization, generate_paper_visualizations, generate_single_object_viz,
-)
-from triangulang.data.dataset_factory import get_dataset, get_dataset_config
-from triangulang.utils.metrics import compute_gt_centroid as compute_gt_centroid_util
-from triangulang.utils.ddp_utils import DDPManager
+from triangulang.utils.ddp_utils import DDPManager  # noqa: E402
 
 
 
-from triangulang.data.dataset_factory import get_dataset, get_dataset_config
 
 
 def evaluate_with_dataset(
@@ -97,7 +80,6 @@ def evaluate_with_dataset(
     all_precisions = []
     all_f1s = []
     centroid_errors = []
-    centroid_errors_world = []
 
     pbar = tqdm(dataloader, desc="Evaluating", disable=not ddp.is_main)
 
@@ -199,7 +181,6 @@ def evaluate_with_dataset(
 
                                 # Run DA3 on chunk - model expects [B, N, C, H, W] for multi-view
                                 # Reshape to [1, chunk, C, H, W] so DA3 sees all views together
-                                chunk_batch = chunk_images.unsqueeze(0)  # [1, chunk, 3, H, W]
 
                                 # Get depth using DA3's batch processing
                                 # Note: This calls DA3 with proper multi-view batching
@@ -461,7 +442,7 @@ def evaluate_with_dataset(
                         gt_centroid_tensor = gt_centroid.to(device).squeeze()  # [3]
                         error = torch.norm(pred_centroid - gt_centroid_tensor).item()
                         centroid_errors.append(error)
-            except Exception as e:
+            except Exception:
                 pass  # Skip centroid error if data not available
 
             # Update progress bar
@@ -649,7 +630,7 @@ def evaluate_with_dataset(
     spatial_eval_enabled = getattr(args, 'spatial_eval', False)
 
     if spatial_eval_enabled and ddp.is_main:
-        logger.info(f"Spatial Eval Pass (single-instance robustness)")
+        logger.info("Spatial Eval Pass (single-instance robustness)")
 
     spatial_ious_generic = []
     spatial_details_generic = defaultdict(list)
@@ -754,7 +735,7 @@ def evaluate_with_dataset(
                 'per_qualifier_iou': {q: float(v) for q, v in spatial_per_q.items()},
             }
             if ddp.is_main:
-                print(f"Spatial Robustness")
+                print("Spatial Robustness")
                 print(f"  Baseline mIoU:  {100*mean_iou:.2f}%")
                 print(f"  Spatial mIoU:   {100*spatial_mean:.2f}%  (delta={100*(spatial_mean-mean_iou):+.2f}%)")
                 for q in GENERIC_SPATIAL_QUALIFIERS:

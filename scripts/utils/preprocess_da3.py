@@ -87,7 +87,7 @@ def main():
     is_main = (local_rank == 0)
 
     if is_main:
-        logger.info(f"Preprocessing DA3 depth for ScanNet++")
+        logger.info("Preprocessing DA3 depth for ScanNet++")
         logger.info(f"  Data root: {args.data_root}")
         logger.info(f"  Split: {args.split}")
         logger.info(f"  DA3 model: {args.da3_model}")
@@ -102,7 +102,7 @@ def main():
     da3.eval()
 
     if is_main:
-        logger.info(f"  DA3 loaded successfully")
+        logger.info("  DA3 loaded successfully")
 
     # Get scene list
     data_root = Path(args.data_root)
@@ -260,7 +260,7 @@ def main():
     if is_main:
         print(f"\nDone! Cache saved to {cache_dir}")
         print(f"  Depth saved at {args.sam3_resolution}x{args.sam3_resolution} resolution")
-        print(f"  Training will use cached depth directly (no upsampling needed)")
+        print("  Training will use cached depth directly (no upsampling needed)")
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(message)s')

@@ -12,26 +12,26 @@ import triangulang
 import torch
 
 logger = triangulang.get_logger(__name__)
-import torch.nn.functional as F
-from torch.amp import autocast
-from scipy.optimize import linear_sum_assignment
-from triangulang.losses.segmentation import (
+import torch.nn.functional as F  # noqa: E402
+from torch.amp import autocast  # noqa: E402
+from scipy.optimize import linear_sum_assignment  # noqa: E402
+from triangulang.losses.segmentation import (  # noqa: E402
     focal_loss, dice_loss, align_loss, contrastive_mask_loss, centroid_loss,
     point_sampled_loss, lovasz_loss,
 )
-from triangulang.utils.metrics import (
+from triangulang.utils.metrics import (  # noqa: E402
     compute_iou, compute_recall, compute_mean_accuracy,
     compute_per_mask_ious, compute_gt_centroid,
 )
-from triangulang.utils.matching import hungarian_match, text_greedy_match
-from triangulang.utils.geometry import triangulate_centroid
-from triangulang.training.forward_passes_common import (
+from triangulang.utils.matching import hungarian_match, text_greedy_match  # noqa: E402
+from triangulang.utils.geometry import triangulate_centroid  # noqa: E402
+from triangulang.training.forward_passes_common import (  # noqa: E402
     connect_aux_heads_to_graph, connect_trainable_params_to_graph, smooth_mask_logits,
 )
 
 # Re-exports (keep importable from triangulang.training.forward_passes).
-from triangulang.training.forward_passes_cross_view import _forward_cross_view
-from triangulang.training.forward_passes_seq import _compute_sheaf_loss, _forward_sequential
+from triangulang.training.forward_passes_cross_view import _forward_cross_view  # noqa: E402, F401
+from triangulang.training.forward_passes_seq import _compute_sheaf_loss, _forward_sequential  # noqa: E402, F401
 
 
 def _forward_batch_views(model, base_model, images, gt_masks, prompts, batch, args, device, ddp,
@@ -602,7 +602,6 @@ def _forward_batch_views(model, base_model, images, gt_masks, prompts, batch, ar
                     gt_resized_bv = all_gt_resized.reshape(B, N_views, pm_h, pm_w)
                     ext_bv = all_da3_extrinsics.reshape(B, N_views, 4, 4)
                     int_bv = all_da3_intrinsics.reshape(B, N_views, 3, 3)
-                    pointmaps_bv = pointmaps_full.reshape(B, N_views, pm_h, pm_w, 3)
 
                     for b_idx in range(B):
                         # Check if this scene has any valid views

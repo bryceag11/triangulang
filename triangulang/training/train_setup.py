@@ -16,19 +16,18 @@ from depth_anything_3.api import DepthAnything3
 from triangulang import BPE_PATH as _BPE_PATH
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-from triangulang.models.triangulang_model import TrianguLangModel
-from triangulang.utils.lora import LoRALayer, LoRAManager
-from triangulang.data.dataset_factory import get_dataset, get_dataset_config
-from triangulang.training.config import TrainConfig
-from torch.amp import GradScaler
-from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR, StepLR
-from triangulang.utils.spatial_reasoning import SpatialAugmentor
-from triangulang.utils.spatial_context import GTAwareSpatialAugmentor
-from triangulang.losses.sheaf_losses import FeatureSheafLoss, SheafConsistencyLoss
-from triangulang.training.train_helpers import set_seed, collate_fn, run_validation, visualize_predictions
-from triangulang.utils.scannetpp_loader import ScanNetPPMultiViewDataset
+from triangulang.models.triangulang_model import TrianguLangModel  # noqa: E402
+from triangulang.utils.lora import LoRALayer, LoRAManager  # noqa: E402
+from triangulang.data.dataset_factory import get_dataset, get_dataset_config  # noqa: E402
+from triangulang.training.config import TrainConfig  # noqa: E402
+from torch.amp import GradScaler  # noqa: E402
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR, StepLR  # noqa: E402
+from triangulang.utils.spatial_reasoning import SpatialAugmentor  # noqa: E402
+from triangulang.utils.spatial_context import GTAwareSpatialAugmentor  # noqa: E402
+from triangulang.losses.sheaf_losses import FeatureSheafLoss, SheafConsistencyLoss  # noqa: E402
+from triangulang.training.train_helpers import set_seed, collate_fn, run_validation, visualize_predictions  # noqa: E402
 
-import triangulang
+import triangulang  # noqa: E402
 logger = triangulang.get_logger(__name__)
 
 
@@ -56,7 +55,7 @@ def _setup_config(args):
         if sam3_applied:
             logger.debug(f"[--sam3-defaults] Applied: {', '.join(sam3_applied)}")
         else:
-            logger.debug(f"[--sam3-defaults] All SAM3 settings already active or overridden by CLI")
+            logger.debug("[--sam3-defaults] All SAM3 settings already active or overridden by CLI")
 
     if args.pe_type == 'none':
         args.use_world_pe = False
@@ -139,23 +138,23 @@ def _init_environment(args, ddp):
     logger.debug(f"  DA3 model: {da3_name}")
     logger.debug(f"    - Pose estimation capability: {da3_has_pose}")
     logger.debug(f"    - Metric depth: {da3_has_metric}")
-    logger.debug(f"    - NOTE: Will use GT poses from dataset if available, otherwise identity pose")
+    logger.debug("    - NOTE: Will use GT poses from dataset if available, otherwise identity pose")
     if args.use_sheaf_loss:
         logger.debug(f"  Sheaf loss: enabled (weight={args.sheaf_weight}, type={args.sheaf_type})")
         if args.sheaf_type == 'feature':
             logger.debug(f"    - NON-CONSTANT sheaf: learned restriction maps on R^256 -> R^{args.sheaf_d_edge}")
         else:
-            logger.debug(f"    - Constant sheaf: identity restriction maps")
-        logger.debug(f"    - Requires GT extrinsics from dataset for world-consistent pointmaps")
-        logger.debug(f"    - If GT poses unavailable, falls back to camera-frame (less effective)")
+            logger.debug("    - Constant sheaf: identity restriction maps")
+        logger.debug("    - Requires GT extrinsics from dataset for world-consistent pointmaps")
+        logger.debug("    - If GT poses unavailable, falls back to camera-frame (less effective)")
 
     logger.debug(f"  GASA (geometric bias): {args.use_gasa}" + (" [ABLATION: disabled]" if not args.use_gasa else ""))
     if args.use_gt_poses_for_gasa:
-        logger.debug(f"  GASA pointmaps: GT COLMAP poses (globally consistent)")
+        logger.debug("  GASA pointmaps: GT COLMAP poses (globally consistent)")
     elif args.use_da3_poses_for_gasa:
-        logger.debug(f"  GASA pointmaps: DA3-NESTED estimated poses (chunk-consistent)")
+        logger.debug("  GASA pointmaps: DA3-NESTED estimated poses (chunk-consistent)")
     else:
-        logger.debug(f"  GASA pointmaps: camera-frame (identity pose) [WARNING: no cross-view consistency]")
+        logger.debug("  GASA pointmaps: camera-frame (identity pose) [WARNING: no cross-view consistency]")
     kernel_desc = {'learned': f'learned MLP (dim={args.gasa_kernel_dim})', 'rbf': 'RBF exp(-d²/2σ²)', 'fixed': 'fixed φ(d) = -d'}
     bidir_str = " [BIDIRECTIONAL: boost+suppress]" if args.gasa_bidirectional else " [suppress-only]"
     logger.debug(f"  GASA kernel: {kernel_desc.get(args.gasa_kernel_type, args.gasa_kernel_type)}{bidir_str}")
@@ -193,7 +192,7 @@ def _init_environment(args, ddp):
         orig_pixels = int(args.min_mask_coverage * 1752 * 1168)
         logger.debug(f"  Min mask coverage: {args.min_mask_coverage*100:.2f}% (approx {orig_pixels} pixels at ~1752x1168 original)")
     else:
-        logger.debug(f"  Min mask coverage: disabled (any non-empty mask is valid)")
+        logger.debug("  Min mask coverage: disabled (any non-empty mask is valid)")
 
     return device
 
@@ -225,7 +224,7 @@ def _load_datasets(args, ddp):
 
     if args.num_objects != 1:
         if args.num_objects == 0:
-            logger.debug(f"  Multi-object training: DYNAMIC K (all visible objects per sample, like SAM3)")
+            logger.debug("  Multi-object training: DYNAMIC K (all visible objects per sample, like SAM3)")
         else:
             logger.debug(f"  Multi-object training: K={args.num_objects} objects per sample")
         logger.debug(f"  Hungarian matching enabled: {args.num_queries} queries competing for K GT objects")
@@ -262,7 +261,7 @@ def _load_datasets(args, ddp):
         logger.debug(f"  Sampling strategy: {args.sampling_strategy}")
         if args.sampling_strategy == 'chunk_aware':
             logger.debug(f"  DA3 chunk size: {args.da3_chunk_size}")
-            logger.debug(f"  Note: Views will be sampled from same DA3-NESTED chunk for world-frame consistency")
+            logger.debug("  Note: Views will be sampled from same DA3-NESTED chunk for world-frame consistency")
 
     if args.use_cached_depth:
         logger.debug(f"  da3_cache_dir: {dataset.da3_cache_dir} ({args.da3_cache_name})")
@@ -601,13 +600,13 @@ def _setup_training(model, base_model, args, device, ddp):
             logger.debug(f"GT-aware spatial augmentation enabled (prob={args.spatial_augment_prob}, "
                       f"relational={args.spatial_relational_prob})")
             if not args.use_cached_depth:
-                logger.info(f"  WARNING: --spatial-gt-aware requires --use-cached-depth for accurate depth!")
+                logger.info("  WARNING: --spatial-gt-aware requires --use-cached-depth for accurate depth!")
         else:
             spatial_augmentor = SpatialAugmentor(augment_prob=args.spatial_augment_prob)
             logger.debug(f"Spatial augmentation enabled (prob={args.spatial_augment_prob}) [RANDOM - labels may be wrong!]")
 
     if args.use_spatial_tokens or args.use_spatial_points or args.use_object_aware_spatial or args.spatial_augment_prob > 0:
-        logger.debug(f"  Spatial Reasoning:")
+        logger.debug("  Spatial Reasoning:")
         logger.debug(f"    Spatial tokens: {args.use_spatial_tokens}")
         logger.debug(f"    Spatial-as-points: {args.use_spatial_points}")
         logger.debug(f"    Object-aware spatial: {args.use_object_aware_spatial}" + (" (uses mask+depth for 'nearest chair')" if args.use_object_aware_spatial else ""))
@@ -630,7 +629,7 @@ def _setup_training(model, base_model, args, device, ddp):
                 context_dim=5,
             ).to(device)
             n_sheaf_params = sum(p.numel() for p in feature_sheaf_loss_fn.parameters())
-            logger.debug(f"Feature sheaf loss initialized (non-constant, learned restriction maps)")
+            logger.debug("Feature sheaf loss initialized (non-constant, learned restriction maps)")
             logger.debug(f"  Stalks: R^256 (SAM3 features), Edge space: R^{args.sheaf_d_edge}")
             logger.debug(f"  Trainable params: {n_sheaf_params:,}")
             logger.debug(f"  Threshold: {args.sheaf_threshold}m, max_frame_distance: {args.sheaf_max_frame_distance}")
@@ -740,14 +739,14 @@ def _setup_training(model, base_model, args, device, ddp):
             if 'optimizer' in checkpoint:
                 try:
                     optimizer.load_state_dict(checkpoint['optimizer'])
-                    logger.debug(f"  Restored optimizer state")
+                    logger.debug("  Restored optimizer state")
                 except (ValueError, RuntimeError) as e:
                     logger.info(f"  WARNING: Could not restore optimizer state ({e}). "
                               f"Re-initializing optimizer (new params added since checkpoint).")
 
             if scheduler is not None and 'scheduler' in checkpoint and checkpoint['scheduler'] is not None:
                 scheduler.load_state_dict(checkpoint['scheduler'])
-                logger.debug(f"  Restored scheduler state")
+                logger.debug("  Restored scheduler state")
 
             if 'scaler' in checkpoint and checkpoint['scaler'] is not None:
                 scaler.load_state_dict(checkpoint['scaler'])
@@ -759,11 +758,11 @@ def _setup_training(model, base_model, args, device, ddp):
 
             if 'sam3_seghead' in checkpoint and checkpoint['sam3_seghead'] is not None:
                 base_model.sam3.segmentation_head.load_state_dict(checkpoint['sam3_seghead'])
-                logger.debug(f"  Restored SAM3 seghead state")
+                logger.debug("  Restored SAM3 seghead state")
 
             if 'mask_embed' in checkpoint and checkpoint['mask_embed'] is not None:
                 base_model.sam3.segmentation_head.mask_predictor.mask_embed.load_state_dict(checkpoint['mask_embed'])
-                logger.debug(f"  Restored mask_embed state")
+                logger.debug("  Restored mask_embed state")
 
             try:
                 if 'rng_state' in checkpoint:
@@ -804,12 +803,12 @@ def _setup_training(model, base_model, args, device, ddp):
             base_model.query_proj.load_state_dict(checkpoint['query_proj'], strict=False)
             if 'sam3_seghead' in checkpoint and checkpoint['sam3_seghead'] is not None:
                 base_model.sam3.segmentation_head.load_state_dict(checkpoint['sam3_seghead'])
-                logger.debug(f"  Loaded SAM3 seghead weights")
+                logger.debug("  Loaded SAM3 seghead weights")
             if 'mask_embed' in checkpoint and checkpoint['mask_embed'] is not None:
                 base_model.sam3.segmentation_head.mask_predictor.mask_embed.load_state_dict(checkpoint['mask_embed'])
-                logger.debug(f"  Loaded mask_embed weights")
+                logger.debug("  Loaded mask_embed weights")
             logger.info(f"  Loaded model weights (epoch {checkpoint.get('epoch', '?')}, iou={100*checkpoint.get('best_iou', 0):.2f}%)")
-            logger.info(f"  Starting fresh from epoch 0 with new optimizer/scheduler")
+            logger.info("  Starting fresh from epoch 0 with new optimizer/scheduler")
         else:
             logger.info(f"WARNING: Weights not found at {weights_path}, starting fresh")
 
@@ -906,7 +905,7 @@ def _run_validation_and_save(model, val_dataloader, base_model, optimizer, sched
                               checkpoint_dir):
     val_metrics = None
     if args.val_every > 0 and val_dataloader is not None and (epoch + 1) % args.val_every == 0:
-        logger.info(f"  Running validation...")
+        logger.info("  Running validation...")
         val_metrics = run_validation(model, val_dataloader, device, ddp, args, scaler)
         val_str = f"  Val: Loss={val_metrics['val_loss']:.4f}, IoU={100*val_metrics['val_iou']:.2f}%, mIoU={100*val_metrics['val_miou']:.2f}% ({val_metrics['val_num_categories']} cats)"
         logger.info(val_str)

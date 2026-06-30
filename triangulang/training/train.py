@@ -16,22 +16,21 @@ import warnings
 # Suppress PyTorch scheduler deprecation warning (internal to SequentialLR)
 warnings.filterwarnings('ignore', message='.*epoch parameter in.*scheduler.step.*')
 
-import cv2
+import cv2  # noqa: E402
 cv2.setNumThreads(0)
 cv2.ocl.setUseOpenCL(False)
 
-import sys
-import gc
-import json
-import random
-import time
-from pathlib import Path
-from contextlib import nullcontext
+import sys  # noqa: E402
+import gc  # noqa: E402
+import json  # noqa: E402
+import random  # noqa: E402
+from pathlib import Path  # noqa: E402
+from contextlib import nullcontext  # noqa: E402
 
-import tyro
-import torch
-from tqdm import tqdm
-import psutil
+import tyro  # noqa: E402
+import torch  # noqa: E402
+from tqdm import tqdm  # noqa: E402
+import psutil  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -39,24 +38,24 @@ sys.path.insert(0, str(PROJECT_ROOT / 'sam3'))
 sys.path.insert(0, str(PROJECT_ROOT / 'depth_anything_v3' / 'src'))
 
 # DDP support - auto-detects if running via torchrun (must be after sys.path setup)
-from triangulang.utils.ddp_utils import DDPManager
+from triangulang.utils.ddp_utils import DDPManager  # noqa: E402
 
-from triangulang.utils.spatial_reasoning import (
+from triangulang.utils.spatial_reasoning import (  # noqa: E402
     parse_spatial_qualifier,
     get_spatial_qualifier_idx,
 )
-from triangulang.training.config import TrainConfig
-from triangulang.utils.metrics import CategoryMetricsTracker
-from triangulang.training.forward_passes import (
+from triangulang.training.config import TrainConfig  # noqa: E402
+from triangulang.utils.metrics import CategoryMetricsTracker  # noqa: E402
+from triangulang.training.forward_passes import (  # noqa: E402
     _forward_cross_view, _forward_batch_views, _forward_sequential,
 )
-from triangulang.training.train_helpers import visualize_predictions
-from triangulang.training.train_setup import (
+from triangulang.training.train_helpers import visualize_predictions  # noqa: E402
+from triangulang.training.train_setup import (  # noqa: E402
     _setup_config, _init_environment, _load_datasets, _build_model,
     _setup_training, _save_checkpoint, _finalize_epoch, _run_validation_and_save,
 )
 
-import triangulang
+import triangulang  # noqa: E402
 logger = triangulang.get_logger(__name__)
 
 
@@ -190,20 +189,20 @@ def main():
             # Log pose configuration (first batch only)
             if batch_idx == 0 and epoch == start_epoch and ddp.is_main:
                 if args.no_gt_poses:
-                    logger.debug(f"  GT poses suppressed (--no-gt-poses) -> using DA3-NESTED estimated poses")
+                    logger.debug("  GT poses suppressed (--no-gt-poses) -> using DA3-NESTED estimated poses")
                 if args.use_da3_poses_for_gasa and cached_da3_extrinsics is not None:
-                    logger.debug(f"  World PE / GASA: Using DA3-NESTED estimated poses -> world-frame pointmaps")
+                    logger.debug("  World PE / GASA: Using DA3-NESTED estimated poses -> world-frame pointmaps")
                 else:
-                    logger.debug(f"  World PE / GASA: Using camera-frame pointmaps (train/eval consistent)")
+                    logger.debug("  World PE / GASA: Using camera-frame pointmaps (train/eval consistent)")
                 if sheaf_loss_fn is not None:
                     if gt_extrinsics is not None:
-                        logger.debug(f"  Sheaf loss: Using GT extrinsics -> world-frame pointmaps")
+                        logger.debug("  Sheaf loss: Using GT extrinsics -> world-frame pointmaps")
                     elif args.no_gt_poses and cached_da3_extrinsics is not None:
-                        logger.debug(f"  Sheaf loss: Using DA3-NESTED estimated poses (calibration-free mode)")
+                        logger.debug("  Sheaf loss: Using DA3-NESTED estimated poses (calibration-free mode)")
                     elif model.da3_has_pose_estimation if hasattr(model, 'da3_has_pose_estimation') else False:
-                        logger.debug(f"  Sheaf loss: Using DA3-estimated poses -> world-frame pointmaps")
+                        logger.debug("  Sheaf loss: Using DA3-estimated poses -> world-frame pointmaps")
                     else:
-                        logger.debug(f"  Sheaf loss: No world-frame poses available -> camera-frame (less effective)")
+                        logger.debug("  Sheaf loss: No world-frame poses available -> camera-frame (less effective)")
 
             # Apply spatial augmentation if enabled (adds "nearest", "leftmost", etc.)
             # GT-aware mode uses actual mask positions; otherwise random qualifiers

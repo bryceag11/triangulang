@@ -50,7 +50,7 @@ logger = triangulang.get_logger(__name__)
 # Try to import uCO3D package
 try:
     from uco3d import UCO3DDataset as UCO3DDatasetBase, UCO3DFrameDataBuilder
-    from uco3d.dataset_utils.utils import get_dataset_root
+    from uco3d.dataset_utils.utils import get_dataset_root  # noqa: F401
     HAS_UCO3D = True
 except ImportError:
     HAS_UCO3D = False
@@ -64,7 +64,7 @@ except ImportError:
     HAS_H5PY = False
 
 
-from triangulang.data.uco3d_utils import (
+from triangulang.data.uco3d_utils import (  # noqa: E402
     SKIP_CATEGORIES, SKIP_SEQUENCES, normalize_prompt,
 )
 

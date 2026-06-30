@@ -19,12 +19,12 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-import cv2
-import numpy as np
-import torch
-import torch.nn.functional as F
-from PIL import Image
-from torch.amp import autocast
+import cv2  # noqa: E402
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
+import torch.nn.functional as F  # noqa: E402
+from PIL import Image  # noqa: E402
+from torch.amp import autocast  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -511,7 +511,7 @@ def main():
         tmp_out.rename(ffmpeg_out)
         logger.info(f"Re-encoded with H.264: {ffmpeg_out}")
     except (subprocess.CalledProcessError, FileNotFoundError):
-        logger.info(f"(ffmpeg not available, using mp4v codec)")
+        logger.info("(ffmpeg not available, using mp4v codec)")
 
     duration = len(processed_frames) / args.fps
     print(f"\nSaved: {output_path}")

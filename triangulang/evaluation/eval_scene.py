@@ -5,7 +5,6 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.amp import autocast
-from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
@@ -16,34 +15,20 @@ from scipy.optimize import linear_sum_assignment
 
 from triangulang.models.triangulang_model import TrianguLangModel
 from triangulang.utils.prompt_augmentor import PromptAugmentor
-from triangulang.utils.scannetpp_loader import normalize_label, is_excluded_frame, SCANNETPP_SKIP_LABELS
-from triangulang.utils.spatial_reasoning import (
-    get_mask_centroid, get_depth_at_centroid,
-    parse_spatial_qualifier, get_spatial_qualifier_idx,
-)
-from triangulang.models.sheaf_embeddings import compute_3d_localization, format_localization_text
+from triangulang.utils.scannetpp_loader import SCANNETPP_SKIP_LABELS
 from triangulang.evaluation.eval_utils import (
-    create_prompts_from_gt, compute_metrics, compute_oracle_iou,
-    compute_3d_centroid, compute_centroid_error, umeyama_alignment,
-    compute_cross_view_consistency, compute_spatial_gt,
+    compute_metrics, compute_oracle_iou,
+    umeyama_alignment,
 )
 from triangulang.evaluation.data_loading import (
-    load_scene_data, load_gt_masks, load_gt_poses, get_frame_extrinsics,
-    load_cached_da3_nested, load_gt_centroids, load_gt_poses_for_scene,
+    load_scene_data, load_gt_masks, load_gt_poses_for_scene,
 )
 from triangulang.evaluation.visualization import (
-    MASK_COLORS, overlay_mask_sam3_style, create_multi_object_viz,
-    save_visualization, generate_paper_visualizations, generate_single_object_viz,
+    create_multi_object_viz,
 )
-from triangulang.data.dataset_factory import get_dataset, get_dataset_config
-from triangulang.utils.metrics import compute_gt_centroid as compute_gt_centroid_util
 
 
 
-from triangulang.evaluation.eval_single_prompt import (
-    evaluate_multiview_single_prompt,
-    evaluate_scene_single_prompt,
-)
 from triangulang.evaluation.eval_scene_helpers import (
     _prepare_spatial_queries,
     _prepare_multi_instance_eval,
@@ -218,7 +203,6 @@ def _evaluate_scene_multi_object(
             # Direct 1:1 matching: object k's mask is pred_masks_k[k]
             matched_pairs = [(k_idx, k_idx) for k_idx in valid_objects]  # (obj_idx, pred_idx)
             pred_source = pred_masks_k
-            gt_source = gt_per_object
         else:
             # Original path: Hungarian matching on IoU
             all_masks = outputs.get('all_masks')  # [1, Q, H, W]
@@ -267,7 +251,6 @@ def _evaluate_scene_multi_object(
             # Build matched pairs: (obj_idx, query_idx)
             matched_pairs = [(valid_objects[ki], qi) for qi, ki in zip(row_ind.tolist(), col_ind.tolist())]
             pred_source = all_masks
-            gt_source = None  # Use gt_stack indexed by col_ind
             # Remap: for Hungarian path, pred is query idx, gt is from gt_stack
             matched_pairs_hungarian = list(zip(row_ind.tolist(), col_ind.tolist()))
 
@@ -747,7 +730,7 @@ def evaluate_scene(
             else:
                 print(f"    [Procrustes] WARNING: scene cache dir not found: {scene_cache_dir}")
         else:
-            print(f"    [Procrustes] WARNING: da3_cache_dir is None")
+            print("    [Procrustes] WARNING: da3_cache_dir is None")
 
         if gt_poses and scene_da3_extrinsics:
             gt_points = []

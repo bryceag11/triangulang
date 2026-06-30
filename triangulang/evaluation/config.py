@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass, field, fields
-from typing import Annotated, Literal, Optional, Tuple, List
+from typing import Annotated, Literal, Optional, List
 
 import tyro
 

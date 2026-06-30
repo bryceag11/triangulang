@@ -224,7 +224,7 @@ def main():
     with open(output_path, 'w') as f:
         json.dump(all_centroids, f)
 
-    print(f"\nCaching complete!")
+    print("\nCaching complete!")
     print(f"  Scenes processed: {success}/{len(scenes)}")
     print(f"  Total objects: {sum(len(v) for v in all_centroids.values())}")
     print(f"  Output: {output_path}")

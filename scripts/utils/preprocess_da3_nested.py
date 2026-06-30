@@ -426,7 +426,7 @@ def main():
     is_main = (local_rank == 0)
 
     if is_main:
-        logger.info(f"Preprocessing DA3-NESTED depth + poses for ScanNet++")
+        logger.info("Preprocessing DA3-NESTED depth + poses for ScanNet++")
         logger.info(f"  Data root: {args.data_root}")
         logger.info(f"  Cache name: {args.cache_name}")
         logger.info(f"  Split: {args.split}")
@@ -443,7 +443,7 @@ def main():
     input_processor = None
     if not args.procrustes_only:
         if is_main:
-            logger.info(f"Loading DA3 model (this may take a moment for 1.4B params)...")
+            logger.info("Loading DA3 model (this may take a moment for 1.4B params)...")
 
         from depth_anything_3.api import DepthAnything3
         da3 = DepthAnything3.from_pretrained(args.da3_model).to(device)
@@ -454,10 +454,10 @@ def main():
         input_processor = InputProcessor()
 
         if is_main:
-            logger.info(f"  DA3 loaded successfully")
+            logger.info("  DA3 loaded successfully")
     else:
         if is_main:
-            logger.info(f"[Procrustes-only mode] Skipping DA3 model loading")
+            logger.info("[Procrustes-only mode] Skipping DA3 model loading")
 
     # Get scene list
     data_root = Path(args.data_root)
@@ -882,12 +882,12 @@ def main():
         print(f"Done! Cache saved to: {cache_dir}")
         print(f"  Processing resolution: {args.resolution} (aspect-ratio preserved)")
         print(f"  Chunk size: {chunk_size}, Overlap: {overlap}")
-        print(f"  Each .pt file contains:")
-        print(f"    - depth: [H, W] float16 (metric meters, globally aligned)")
-        print(f"    - extrinsics: [4, 4] float32 (camera-to-world, globally aligned)")
-        print(f"    - intrinsics: [3, 3] float32")
-        print(f"    - depth_conf: [H, W] float16 (confidence >= 1.0)")
-        print(f"    - chunk_id: int (for chunk_aware sampling)")
+        print("  Each .pt file contains:")
+        print("    - depth: [H, W] float16 (metric meters, globally aligned)")
+        print("    - extrinsics: [4, 4] float32 (camera-to-world, globally aligned)")
+        print("    - intrinsics: [3, 3] float32")
+        print("    - depth_conf: [H, W] float16 (confidence >= 1.0)")
+        print("    - chunk_id: int (for chunk_aware sampling)")
 
         # Procrustes summary
         if all_procrustes:
@@ -909,7 +909,7 @@ def main():
                 print(f"    Bad scenes written to: {bad_log_path}")
 
         print()
-        print(f"To use in training:")
+        print("To use in training:")
         print(f"  --use-cached-depth --da3-cache-name {args.cache_name}")
         print()
 

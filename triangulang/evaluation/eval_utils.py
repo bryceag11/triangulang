@@ -2,7 +2,7 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from triangulang.utils.spatial_reasoning import get_mask_centroid, get_depth_at_centroid
 

@@ -22,15 +22,12 @@ import triangulang
 
 logger = triangulang.get_logger(__name__)
 
-from triangulang.evaluation.eval_utils import compute_metrics, compute_spatial_gt, print_results_table
-from triangulang.evaluation.data_loading import load_model
-from triangulang.evaluation.visualization import MASK_COLORS, overlay_mask_sam3_style
-from triangulang.data.lerf_ovs_dataset import (
-    LERFOVSDataset, get_lerf_prompt, LERF_SCENES,
-    LERF_EXCLUDE_CATEGORIES, LERF_LOC_OVERRIDES,
-    LERF_PROMPT_ALIASES_BY_SCENE, LERF_PROMPT_OVERRIDES,
+from triangulang.evaluation.eval_utils import print_results_table  # noqa: E402
+from triangulang.data.lerf_ovs_dataset import (  # noqa: E402
+    LERFOVSDataset, get_lerf_prompt, LERF_EXCLUDE_CATEGORIES, LERF_LOC_OVERRIDES,
+    LERF_PROMPT_ALIASES_BY_SCENE,
 )
-from triangulang.utils.spatial_reasoning import parse_spatial_qualifier, get_spatial_qualifier_idx
+from triangulang.utils.spatial_reasoning import parse_spatial_qualifier, get_spatial_qualifier_idx  # noqa: E402
 
 
 # Helpers
