@@ -15,7 +15,7 @@ import triangulang
 
 logger = triangulang.get_logger(__name__)
 
-from triangulang.evaluation.visualization import MASK_COLORS, overlay_mask_sam3_style
+from triangulang.evaluation.visualization import MASK_COLORS, overlay_mask_sam3_style, render_mask_standalone
 
 # Paper-Quality Grid Visualization
 

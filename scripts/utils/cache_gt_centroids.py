@@ -24,9 +24,6 @@ from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
-# Add paths
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 try:
     import trimesh
     HAS_TRIMESH = True
@@ -34,10 +31,8 @@ except ImportError:
     HAS_TRIMESH = False
     logger.warning("trimesh not installed. Run: pip install trimesh")
 
-# Constants
 SCANNETPP_ROOT = Path(__file__).parent.parent / "data" / "scannetpp"
 
-# Load vertex-to-object ID mapping
 def load_vertex_object_ids(scene_path: Path):
     # Try segments file
     segments_path = scene_path / "scans" / "segments.json"
@@ -58,7 +53,6 @@ def load_vertex_object_ids(scene_path: Path):
 
     return None, None
 
-# Get list of object IDs from annotations
 def get_object_ids_from_annotations(scene_path: Path):
     anno_path = scene_path / "scans" / "segments_anno.json"
     if not anno_path.exists():
@@ -76,7 +70,6 @@ def get_object_ids_from_annotations(scene_path: Path):
 
     return obj_id_to_label
 
-# Compute 3D centroid (median) for an object
 def compute_centroid_for_object(vertices: np.ndarray, vertex_obj_ids: np.ndarray, obj_id: int):
     mask = vertex_obj_ids == obj_id
     if not np.any(mask):
@@ -87,7 +80,6 @@ def compute_centroid_for_object(vertices: np.ndarray, vertex_obj_ids: np.ndarray
     centroid = np.median(obj_vertices, axis=0)
     return centroid.tolist()
 
-# Process single scene, return dict of obj_id -> centroid
 def process_scene(scene_id: str, data_root: Path):
     scene_path = data_root / "data" / scene_id
 
@@ -126,7 +118,6 @@ def process_scene(scene_id: str, data_root: Path):
 
     return centroids, None
 
-# Get list of scenes from data directory
 def get_all_scenes(data_root: Path, split: str = "train", max_scenes: int = None):
     data_dir = data_root / "data"
     if not data_dir.exists():
@@ -139,7 +130,6 @@ def get_all_scenes(data_root: Path, split: str = "train", max_scenes: int = None
 
     return scenes
 
-# Wrapper for multiprocessing - unpacks args tuple
 def process_scene_wrapper(args):
     scene_id, data_root = args
     return scene_id, process_scene(scene_id, data_root)

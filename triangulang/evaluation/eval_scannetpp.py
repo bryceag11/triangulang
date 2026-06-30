@@ -2,8 +2,10 @@
 import json
 import time
 import pickle
+import random
 import numpy as np
 import torch
+import torch.distributed as dist
 from pathlib import Path
 from typing import Dict, List, Optional
 from collections import defaultdict, Counter
@@ -26,9 +28,11 @@ from triangulang.evaluation.visualization import (
     plot_category_iou, plot_scene_metrics, plot_summary,
     generate_paper_visualizations, generate_single_object_viz,
 )
-from triangulang.utils.scannetpp_loader import SCANNETPP_SKIP_LABELS
+from triangulang.utils.scannetpp_loader import SCANNETPP_SKIP_LABELS, normalize_label
 from triangulang.utils.spatial_reasoning import parse_spatial_qualifier
+from triangulang.utils.prompt_augmentor import PromptAugmentor
 from triangulang.evaluation.eval_scene import evaluate_scene
+from triangulang.evaluation.eval_single_prompt import evaluate_scene_single_prompt
 from triangulang.evaluation.data_loading import load_scene_data
 
 
@@ -145,7 +149,7 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
     if args.custom_prompts:
         base_prompts = set()
         for prompt in args.custom_prompts:
-            qualifier, base = parse_spatial_query(prompt)
+            qualifier, base = parse_spatial_qualifier(prompt)
             spatial_query_map[prompt.lower()] = (qualifier, base)
             base_prompts.add(base.lower())
             if qualifier:

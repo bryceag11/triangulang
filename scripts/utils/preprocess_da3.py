@@ -11,15 +11,16 @@ import argparse
 import logging
 import os
 import sys
+import traceback
 from pathlib import Path
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 import torchvision.transforms as T
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-# Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / "sam3"))
@@ -93,7 +94,6 @@ def main():
         logger.info(f"  DA3 resolution: {args.da3_resolution} -> SAM3 resolution: {args.sam3_resolution}")
         logger.info(f"  World size: {world_size}")
 
-    # Load DA3 model
     if is_main:
         logger.info(f"[Rank {local_rank}] Loading DA3 model...")
 
@@ -127,7 +127,6 @@ def main():
     if is_main:
         logger.info(f"Found {len(scenes)} scenes with images (from {split_count} in split file)")
 
-    # Create cache directory
     cache_dir = data_root / "da3_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -161,13 +160,7 @@ def main():
 
     # Distribute work across GPUs (round-robin)
     my_images = all_images[local_rank::world_size]
-
-    # Show work distribution across all ranks
     logger.info(f"[Rank {local_rank}] Processing {len(my_images)} images on GPU {local_rank}")
-
-    # Process images in batches for better GPU utilization
-    from PIL import Image
-    import numpy as np
 
     PATCH_SIZE = 14
     IMAGENET_NORMALIZE = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -256,11 +249,9 @@ def main():
 
         except Exception as e:
             logger.warning(f"[Rank {local_rank}] Error processing batch: {e}")
-            import traceback
             traceback.print_exc()
             continue
 
-    # Cleanup
     if world_size > 1:
         import torch.distributed as dist
         dist.barrier()

@@ -3,6 +3,7 @@ import time
 import random
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
 from torch.amp import autocast
 from torch.utils.data import Dataset, DataLoader

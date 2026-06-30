@@ -5,8 +5,10 @@ import random
 from pathlib import Path
 from datetime import datetime
 from collections import Counter
+from functools import partial
 
 import torch
+import torch.nn as nn
 import numpy as np
 
 from sam3 import build_sam3_image_model
@@ -22,7 +24,7 @@ from torch.amp import GradScaler
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR, StepLR
 from triangulang.utils.spatial_reasoning import SpatialAugmentor
 from triangulang.utils.spatial_context import GTAwareSpatialAugmentor
-from triangulang.losses.sheaf_losses import FeatureSheafLoss
+from triangulang.losses.sheaf_losses import FeatureSheafLoss, SheafConsistencyLoss
 from triangulang.training.train_helpers import set_seed, collate_fn, run_validation, visualize_predictions
 from triangulang.utils.scannetpp_loader import ScanNetPPMultiViewDataset
 
@@ -318,7 +320,7 @@ def _load_datasets(args, ddp):
     if args.val_every > 0:
         logger.info(f"Loading validation dataset (split='{args.val_split}')...")
         val_max_samples = args.val_max_samples
-        val_part_query_mode = 'all' if args.dataset == 'partimagenet' else args.part_query_mode
+        val_part_query_mode = args.part_query_mode
 
         val_dataset = get_dataset(
             dataset_name=args.dataset,

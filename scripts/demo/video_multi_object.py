@@ -12,16 +12,19 @@ Usage:
 import argparse
 import json
 import logging
+import subprocess
 import sys
 import time
-from collections import defaultdict
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 import cv2
 import numpy as np
+import torch
+import torch.nn.functional as F
 from PIL import Image
+from torch.amp import autocast
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -160,7 +163,6 @@ def load_scene_objects(scene_path, semantics_dir):
     2. Check which objects are actually visible in the GT mask files
     """
     from triangulang.utils.scannetpp_loader import LABEL_FIXES
-    import json, torch
 
     scene_path = Path(scene_path)
     sem_path = Path(semantics_dir)
@@ -192,7 +194,6 @@ def load_scene_objects(scene_path, semantics_dir):
         return {}
 
     # Sample a few frames to find visible objects
-    import numpy as np
     sample_indices = np.linspace(0, len(pth_files) - 1, min(10, len(pth_files)), dtype=int)
     visible_ids = set()
     for idx in sample_indices:
@@ -217,9 +218,6 @@ def load_gt_masks_for_frame(semantics_dir, frame_name):
     Returns dict: obj_id -> binary numpy mask.
     The pth files contain per-pixel object ID arrays (int32).
     """
-    import torch
-    import numpy as np
-
     sem_path = Path(semantics_dir)
     # frame_name may be 'DSC02798.JPG': pth is 'DSC02798.JPG.pth'
     for candidate in [f"{frame_name}.pth", f"{Path(frame_name).stem}.pth"]:
@@ -239,10 +237,6 @@ def load_gt_masks_for_frame(semantics_dir, frame_name):
     return {}
 
 def main():
-    import torch
-    import torch.nn.functional as F
-    from torch.amp import autocast
-
     parser = argparse.ArgumentParser(description='Multi-object video demo')
     parser.add_argument('--checkpoint', type=str, required=True, help='Model checkpoint')
     parser.add_argument('--scene', type=str, required=True,
@@ -339,12 +333,9 @@ def main():
 
     # DA3 cache
     da3_cache_dir = None
-    for root in [Path('data/scannetpp'), Path('data/scannetpp')]:
-        candidate = root / args.da3_cache
-        if candidate.exists():
-            da3_cache_dir = candidate
-            break
-    if da3_cache_dir:
+    candidate = Path('data/scannetpp') / args.da3_cache
+    if candidate.exists():
+        da3_cache_dir = candidate
         logger.info(f"DA3 cache: {da3_cache_dir}")
 
     # Temporal smoothing state (per-label EMA of mask logits)
@@ -363,7 +354,6 @@ def main():
 
         # Load image
         img = Image.open(frame_path).convert('RGB')
-        orig_size = img.size  # (W, H)
         img_resized = img.resize(image_size, Image.BILINEAR)
         img_np = np.array(img_resized)
         img_tensor = torch.from_numpy(img_np).permute(2, 0, 1).float() / 255.0
@@ -436,7 +426,6 @@ def main():
         if args.show_gt and semantics_dir:
             gt_data = load_gt_masks_for_frame(semantics_dir, frame_path.name)
             gt_masks_labels = []
-            from triangulang.utils.scannetpp_loader import LABEL_FIXES
             for label in label_list:
                 obj_ids = object_labels.get(label, [])
                 gt_mask = None
@@ -512,7 +501,6 @@ def main():
     # Also encode with ffmpeg for better compatibility if available
     ffmpeg_out = output_path.with_suffix('.mp4')
     tmp_out = output_path.with_name(output_path.stem + '_tmp.mp4')
-    import subprocess
     try:
         subprocess.run([
             'ffmpeg', '-y', '-i', str(output_path),

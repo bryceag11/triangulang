@@ -17,7 +17,6 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 import torch
-import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +28,9 @@ sys.path.insert(0, str(PROJECT_ROOT / 'depth_anything_v3' / 'src'))
 from triangulang.utils.spatial_reasoning import (
     parse_spatial_qualifier,
     parse_relational_query,
-    get_spatial_qualifier_idx,
     filter_by_relation,
     get_mask_centroid,
     get_depth_at_centroid,
-    SPATIAL_QUALIFIERS,
 )
 from depth_anything_3.utils.visualize import visualize_depth
 
@@ -235,12 +232,7 @@ def process_relational_query_parallel(model, image_tensor, prompt, device):
     logger.info(f"  Parsed: target='{target}', reference='{reference}', relation='{relation}'")
     logger.info(f"  Using parallel multi-prompt query")
 
-    # Single forward pass with both prompts
-    # Note: This requires the model to support multiple text prompts
     with torch.no_grad():
-        # For now, run sequentially since multi-prompt batching needs special handling
-        # In full implementation, would batch [target, reference] together
-        target_outputs = model(image_tensor, [target], gt_masks=None)
         ref_outputs = model(image_tensor, [reference], gt_masks=None)
 
     # Get masks and depths
@@ -271,12 +263,10 @@ def visualize_result(image, mask, depth, output_path, prompt):
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
-    # Original image
     axes[0].imshow(image)
     axes[0].set_title(f"Query: '{prompt}'")
     axes[0].axis('off')
 
-    # Mask overlay
     axes[1].imshow(image)
     if mask is not None:
         mask_overlay = np.zeros((*mask.shape, 4))
@@ -323,11 +313,9 @@ def main():
     print(f"Query: '{args.prompt}'")
     print(f"Image: {args.image}")
 
-    # Load model
     logger.info(f"Loading model from {args.checkpoint}...")
     model, config = load_model(args.checkpoint, args.device)
 
-    # Load and preprocess image
     image = Image.open(args.image).convert('RGB')
     image_np = np.array(image)
 
@@ -356,7 +344,6 @@ def main():
         from skimage.transform import resize
         mask = resize(mask.astype(float), image_np.shape[:2], order=0) > 0.5
 
-    # Visualize
     logger.info(f"Saving visualization...")
     visualize_result(image_np, mask, depth, args.output, args.prompt)
 

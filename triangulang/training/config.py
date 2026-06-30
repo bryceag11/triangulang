@@ -225,7 +225,7 @@ class MultiObjectConfig:
 class DataConfig:
     """Dataset and data loading configuration."""
 
-    dataset: Literal['scannetpp', 'nvos', 'spinnerf', 'mvimgnet', 'uco3d', 'partimagenet'] = 'scannetpp'
+    dataset: Literal['scannetpp', 'nvos', 'spinnerf', 'mvimgnet', 'uco3d'] = 'scannetpp'
 
     data_root: Optional[str] = None
     # Dataset root directory (default: dataset-specific)

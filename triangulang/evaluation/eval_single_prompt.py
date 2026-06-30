@@ -1,5 +1,6 @@
 """Single-prompt evaluation: multiview and scene-level."""
 import time
+import math
 import random
 import numpy as np
 import torch
@@ -12,6 +13,8 @@ from collections import defaultdict
 from tqdm import tqdm
 from PIL import Image
 
+from sam3.model.geometry_encoders import Prompt
+from sam3.model.data_misc import FindStage
 from triangulang.models.triangulang_model import TrianguLangModel
 from triangulang.models.model_utils import run_sam3_proper_heads
 from triangulang.utils.prompt_augmentor import PromptAugmentor

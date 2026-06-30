@@ -33,7 +33,7 @@ from triangulang.evaluation.data_loading import (
 )
 from triangulang.evaluation.eval_lerf import _evaluate_lerf
 from triangulang.evaluation.eval_scannetpp import _evaluate_scannetpp
-from triangulang.evaluation.eval_datasets import _evaluate_uco3d, _evaluate_nvos, _evaluate_partimagenet
+from triangulang.evaluation.eval_datasets import _evaluate_uco3d, _evaluate_nvos
 from triangulang import BPE_PATH as _BPE_PATH
 import triangulang
 
@@ -139,7 +139,6 @@ def main():
     if args.data_root is None:
         dataset_paths = {
             'scannetpp': 'data/scannetpp', 'uco3d': 'data/uco3d',
-            'partimagenet': 'data/partimagenet/PartImageNet',
             'lerf_ovs': 'data/lerf_ovs',
             'nvos': 'data/nvos',
         }
@@ -156,8 +155,6 @@ def main():
         _evaluate_lerf(model, args, device, ddp, data_root, output_dir, viz_dir)
     elif args.dataset == 'nvos':
         _evaluate_nvos(model, args, device, ddp, data_root, output_dir, viz_dir)
-    elif args.dataset == 'partimagenet':
-        _evaluate_partimagenet(model, args, device, ddp, data_root, output_dir, viz_dir)
     else:
         _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir,
                             total_params, trainable_params, gasa_params)

@@ -11,6 +11,7 @@ from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 from tqdm import tqdm
 from PIL import Image
+import matplotlib.pyplot as plt
 from scipy.optimize import linear_sum_assignment
 
 from triangulang.models.triangulang_model import TrianguLangModel
@@ -31,7 +32,7 @@ from triangulang.evaluation.data_loading import (
     load_cached_da3_nested, load_gt_centroids, load_gt_poses_for_scene,
 )
 from triangulang.evaluation.visualization import (
-    MASK_COLORS, overlay_mask_sam3_style,
+    MASK_COLORS, overlay_mask_sam3_style, create_multi_object_viz,
     save_visualization, generate_paper_visualizations, generate_single_object_viz,
 )
 from triangulang.data.dataset_factory import get_dataset, get_dataset_config

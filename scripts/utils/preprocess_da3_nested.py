@@ -15,18 +15,17 @@ import logging
 import os
 import sys
 import time
+import traceback
 from copy import deepcopy
 from pathlib import Path
-from collections import defaultdict
 import cv2
 import torch
-import torch.nn.functional as F
 from tqdm import tqdm
 import numpy as np
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-# Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / "sam3"))
@@ -312,7 +311,6 @@ def apply_sim3_to_c2w(c2w, s, R, t):
     Returns:
         aligned c2w: same shape as input
     """
-    N = c2w.shape[0]
     is_4x4 = (c2w.shape[-2] == 4)
 
     rot_cam = c2w[:, :3, :3]  # (N, 3, 3)
@@ -491,7 +489,6 @@ def main():
     scene_data = {}
     total_gt_frames = 0
     total_all_frames = 0
-    transforms_generated = 0
 
     for scene_id in scenes:
         scene_path = scenes_dir / scene_id
@@ -504,15 +501,9 @@ def main():
             continue
 
         # Auto-generate transforms_undistorted.json if missing
-        if args.use_undistorted:
-            if ensure_transforms_undistorted(scene_path):
-                tf_path = scene_path / "dslr" / "nerfstudio" / "transforms_undistorted.json"
-                if not (scene_path / "dslr" / "nerfstudio" / "transforms_undistorted.json.was_generated").exists():
-                    # Check if we just created it (didn't exist before this run)
-                    pass
-            else:
-                if is_main:
-                    logger.warning(f"  {scene_id} - cannot generate transforms_undistorted.json, skipping Procrustes")
+        if args.use_undistorted and not ensure_transforms_undistorted(scene_path):
+            if is_main:
+                logger.warning(f"  {scene_id} - cannot generate transforms_undistorted.json, skipping Procrustes")
 
         gt_frames = get_frames_with_gt_masks(data_root, scene_id, args.split)
         if args.only_with_gt and not gt_frames:
@@ -659,7 +650,6 @@ def main():
                 # InputProcessor returns (N, 3, H, W); model expects (B, S, 3, H, W)
                 if batch_tensor.dim() == 4:
                     batch_tensor = batch_tensor.unsqueeze(0)  # (1, N, 3, H, W)
-                N = batch_tensor.shape[1]
 
                 # Run through model with proper autocast
                 output = da3.forward(
@@ -699,16 +689,14 @@ def main():
                 })
 
                 # Get original image sizes
-                from PIL import Image as PILImage
                 for p in chunk_paths:
-                    img = PILImage.open(p)
+                    img = Image.open(p)
                     chunk_results[-1]['orig_hws'].append((img.height, img.width))
                     img.close()
 
             except Exception as e:
                 logger.warning(f"[Rank {local_rank}] Error processing chunk {chunk_idx} "
                       f"in {scene_id}: {e}")
-                import traceback
                 traceback.print_exc()
                 # Store empty result so alignment indexing stays correct
                 chunk_results.append(None)

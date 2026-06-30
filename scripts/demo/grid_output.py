@@ -14,6 +14,10 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import torch
+import torch.nn.functional as F
+from PIL import Image
+from torch.amp import autocast
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +60,6 @@ def create_paper_figure(
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     import matplotlib.patches as mpatches
-    from matplotlib.offsetbox import AnchoredText
     from scipy import ndimage
 
     H, W = image.shape[:2]
@@ -78,7 +81,6 @@ def create_paper_figure(
 
     # Mask overlay at specified opacity
     mask_overlay = np.zeros((*mask.shape, 4), dtype=np.float32)
-    # Use a teal/cyan color for the mask
     mask_color = np.array([0.0, 0.75, 0.85])  # teal
     mask_overlay[mask > 0, :3] = mask_color
     mask_overlay[mask > 0, 3] = mask_alpha
@@ -216,11 +218,6 @@ def _score_color(score: float) -> tuple:
         return (0.8, 0.2, 0.2)  # red
 
 def main():
-    import torch
-    import torch.nn.functional as F
-    from PIL import Image
-    from torch.amp import autocast
-
     parser = argparse.ArgumentParser(description='Grid visualization output')
     parser.add_argument('--image', type=str, required=True, help='Path to input image')
     parser.add_argument('--prompt', type=str, required=True, help='Text query')
@@ -234,20 +231,15 @@ def main():
     args = parser.parse_args()
     device = args.device if torch.cuda.is_available() else 'cpu'
 
-    # Import model loader from demo_locate_3d
     from scripts.demo_locate_3d import (
         load_model, load_image, parse_spatial_qualifier,
         get_multi_instance_masks, filter_by_spatial_qualifier,
         unproject_to_3d
     )
 
-    # Load model
     model, config = load_model(args.checkpoint, device)
-
-    # Load image
     img_tensor, img_np, orig_size = load_image(args.image, size=args.size)
 
-    # Parse spatial qualifier
     qualifier, base_prompt = parse_spatial_qualifier(args.prompt)
     effective_prompt = base_prompt if qualifier else args.prompt
 

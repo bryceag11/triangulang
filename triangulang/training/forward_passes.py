@@ -17,6 +17,7 @@ from torch.amp import autocast
 from scipy.optimize import linear_sum_assignment
 from triangulang.losses.segmentation import (
     focal_loss, dice_loss, align_loss, contrastive_mask_loss, centroid_loss,
+    point_sampled_loss, lovasz_loss,
 )
 from triangulang.utils.metrics import (
     compute_iou, compute_recall, compute_mean_accuracy,
@@ -587,6 +588,7 @@ def _forward_batch_views(model, base_model, images, gt_masks, prompts, batch, ar
 
                 # Resize pred masks for mask-based or triangulation centroid
                 if args.mask_based_centroid or args.use_triangulation:
+                    all_pred = outputs['pred_masks'][:, 0] if outputs['pred_masks'].dim() == 4 else outputs['pred_masks']
                     all_pred_resized = F.interpolate(
                         all_pred.unsqueeze(1),
                         size=(pm_h, pm_w),

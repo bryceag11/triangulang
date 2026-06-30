@@ -7,7 +7,6 @@ Supported datasets:
     - spinnerf: SpinNeRF benchmark
     - mvimgnet: MVImgNet object-centric dataset
     - uco3d: uCO3D turntable videos
-    - partimagenet: PartImageNet part-level segmentation
     - lerf_ovs: LERF open-vocabulary segmentation
 """
 

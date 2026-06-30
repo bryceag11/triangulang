@@ -43,7 +43,7 @@ class ModelConfig:
 class DataConfig:
     """Dataset and data loading options."""
 
-    dataset: Literal["scannetpp", "nvos", "spinnerf", "uco3d", "partimagenet", "lerf_ovs"] = "scannetpp"
+    dataset: Literal["scannetpp", "nvos", "spinnerf", "uco3d", "lerf_ovs"] = "scannetpp"
 
     data_root: Optional[str] = None
     split: str = "nvs_sem_val_v2"

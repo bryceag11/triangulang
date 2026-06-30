@@ -1,14 +1,17 @@
-"""Dataset-specific evaluation: uCO3D, NVOS, PartImageNet."""
+"""Dataset-specific evaluation: uCO3D, NVOS."""
 import json
 import time
 import traceback
 import numpy as np
 import torch
+import torch.nn.functional as F
+from torch.amp import autocast
 from pathlib import Path
 from typing import Dict, List, Optional
 from collections import defaultdict
 from tqdm import tqdm
 from datetime import datetime
+import matplotlib.pyplot as plt
 import triangulang
 
 logger = triangulang.get_logger(__name__)
@@ -17,7 +20,9 @@ from triangulang.data.dataset_factory import get_dataset, get_dataset_config
 from triangulang.data.uco3d_dataset import UCO3DMultiViewDataset
 from triangulang.data.uco3d_factory import create_uco3d_eval_dataset
 from triangulang.data.nvos_dataset import NVOSDataset, NVOS_PROMPTS
+from triangulang.utils.spatial_reasoning import parse_spatial_qualifier, get_spatial_qualifier_idx
 from triangulang.evaluation.eval_utils import print_cross_fold_analysis
+from triangulang.evaluation.eval_with_dataset import evaluate_with_dataset
 from triangulang.evaluation.visualization import (
     plot_category_iou, plot_summary,
     generate_paper_visualizations, generate_single_object_viz,
@@ -302,46 +307,5 @@ def _evaluate_nvos(model, args, device, ddp, data_root, output_dir, viz_dir):
 
         if args.visualize:
             logger.info(f"Visualizations saved to: {viz_dir / 'nvos'}")
-
-
-
-
-def _evaluate_partimagenet(model, args, device, ddp, data_root, output_dir, viz_dir):
-    from triangulang.data.partimagenet_dataset import PartImageNetDataset, create_partimagenet_eval_dataset
-
-    logger.info(f"PartImageNet Evaluation")
-    logger.debug(f"Using PartImageNetDataset with:")
-    logger.debug(f"  - Split: {args.split}")
-    logger.debug(f"  - Part query mode: all (evaluates all parts)")
-    logger.debug(f"  - 11 super-categories with part-level annotations")
-
-    # Create eval dataset
-    eval_dataset = create_partimagenet_eval_dataset(
-        data_root=str(data_root),
-        split=args.split,
-        image_size=(args.image_size, args.image_size),
-        mask_size=(args.mask_size, args.mask_size),
-        max_samples=args.max_scenes,  # Use max_scenes to limit samples
-    )
-
-    logger.info(f"  - Samples: {len(eval_dataset)}")
-
-    # Run evaluation using dataset (same as uCO3D)
-    results = evaluate_with_dataset(
-        model=model,
-        dataset=eval_dataset,
-        device=device,
-        ddp=ddp,
-        args=args,
-        output_dir=output_dir,
-        viz_dir=viz_dir if args.visualize else None,
-    )
-
-    # Save results
-    if ddp.is_main:
-        results_file = output_dir / 'results.json'
-        with open(results_file, 'w') as f:
-            json.dump(results, f, indent=2)
-        logger.info(f"Results saved to: {results_file}")
 
 

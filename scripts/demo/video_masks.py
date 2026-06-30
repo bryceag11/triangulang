@@ -12,10 +12,17 @@ Usage:
 
 import argparse
 import logging
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
+import cv2
 import numpy as np
+import torch
+import torch.nn.functional as F
+from PIL import Image
+from torch.amp import autocast
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +47,6 @@ def get_scannetpp_frames(scene_dir: str, max_frames: int = 0, stride: int = 1) -
 
 def get_uco3d_frames(seq_dir: str, max_frames: int = 0, stride: int = 1) -> list:
     """Extract frames from a uCO3D sequence video."""
-    import tempfile
     seq_path = Path(seq_dir)
     video_path = seq_path / 'rgb_video.mp4'
     if not video_path.exists():
@@ -48,7 +54,6 @@ def get_uco3d_frames(seq_dir: str, max_frames: int = 0, stride: int = 1) -> list
 
     # Extract frames to temp directory
     tmp_dir = Path(tempfile.mkdtemp(prefix='uco3d_frames_'))
-    import subprocess
     cmd = [
         'ffmpeg', '-i', str(video_path),
         '-q:v', '2',
@@ -97,8 +102,7 @@ def create_overlay(image: np.ndarray, mask: np.ndarray, depth: np.ndarray = None
         from depth_anything_3.utils.visualize import visualize_depth
         depth_vis = visualize_depth(depth, cmap="Spectral")
         if depth_vis.shape[:2] != (H, W):
-            from PIL import Image as PILImage
-            depth_vis = np.array(PILImage.fromarray(depth_vis).resize((W, H)))
+            depth_vis = np.array(Image.fromarray(depth_vis).resize((W, H)))
         # Stack side by side
         overlay = np.concatenate([overlay, depth_vis], axis=1)
 
@@ -108,7 +112,6 @@ def add_text_to_frame(frame: np.ndarray, prompt: str, iou_score: float,
                       centroid_3d: np.ndarray, frame_idx: int, total_frames: int,
                       mask_pixels: int) -> np.ndarray:
     """Add text overlay to frame using OpenCV."""
-    import cv2
     out = frame.copy()
     H, W = out.shape[:2]
 
@@ -128,7 +131,6 @@ def add_text_to_frame(frame: np.ndarray, prompt: str, iou_score: float,
     # Bottom banner with centroid
     if centroid_3d is not None and mask_pixels > 0:
         bot_y = H - 30
-        bot_banner = np.zeros((30, W, 3), dtype=np.uint8)
         out[bot_y:] = (out[bot_y:].astype(float) * 0.4).astype(np.uint8)
         cv2.putText(out, f'3D: ({centroid_3d[0]:+.2f}, {centroid_3d[1]:+.2f}, {centroid_3d[2]:.2f})m  |  {mask_pixels:,} px',
                     (10, H - 10), font, 0.4, (0, 220, 255), 1, cv2.LINE_AA)
@@ -136,11 +138,6 @@ def add_text_to_frame(frame: np.ndarray, prompt: str, iou_score: float,
     return out
 
 def main():
-    import torch
-    import torch.nn.functional as F
-    from PIL import Image
-    from torch.amp import autocast
-
     parser = argparse.ArgumentParser(description='Video demo: streaming multi-view segmentation masks')
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--scene-dir', type=str, help='ScanNet++ scene image directory')
@@ -161,10 +158,8 @@ def main():
     args = parser.parse_args()
     device = args.device if torch.cuda.is_available() else 'cpu'
 
-    # Import model utilities
     from scripts.demo_locate_3d import load_model, parse_spatial_qualifier, unproject_to_3d
 
-    # Load model
     logger.info(f"Loading model from {args.checkpoint}...")
     model, config = load_model(args.checkpoint, device)
 
@@ -265,7 +260,6 @@ def main():
             logger.info(f"  [{idx+1}/{len(frames)}] IoU={iou_score:.2f}, mask={mask.sum():,}px")
 
     # Write video
-    import cv2
     if len(processed_frames) == 0:
         logger.warning("No frames processed.")
         return
