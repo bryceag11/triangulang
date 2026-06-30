@@ -453,6 +453,9 @@ def _build_model(args, ddp, device):
         clean_v=args.clean_v,
         additive_pe=args.additive_pe,
         grouped_text_attn=args.grouped_text_attn,
+        use_sam3_heads=getattr(args, 'use_sam3_heads', False),
+        use_sam3_loss=getattr(args, 'use_sam3_loss', False),
+        train_pixel_decoder=getattr(args, 'train_pixel_decoder', False),
     ).to(device)
     model.per_text_decode = getattr(args, 'per_text_decode', False)
     model.sam3_multi_object = getattr(args, 'sam3_multi_object', False)
@@ -836,7 +839,7 @@ def _save_checkpoint(base_model, optimizer, scheduler, scaler, lora_manager, arg
         'lora': lora_manager.state_dict() if lora_manager else None,
         'best_iou': best_iou,
         'best_val_miou': best_val_miou,
-        'sam3_seghead': base_model.sam3.segmentation_head.state_dict() if args.train_seghead else None,
+        'sam3_seghead': base_model.sam3.segmentation_head.state_dict() if (args.train_seghead or getattr(args, 'train_pixel_decoder', False)) else None,
         'mask_embed': base_model.sam3.segmentation_head.mask_predictor.mask_embed.state_dict() if args.train_mask_embed else None,
         'mask_refiner': base_model.mask_refiner.state_dict() if getattr(base_model, 'use_mask_refiner', False) else None,
     }

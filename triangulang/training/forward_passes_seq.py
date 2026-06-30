@@ -424,13 +424,22 @@ def _forward_sequential(model, base_model, images, gt_masks, prompts, batch, arg
                             pred = F.interpolate(pred.unsqueeze(1), size=view_gt.shape[-2:], mode='bilinear', align_corners=False).squeeze(1)
 
                     else:
-                        # Single-object path (unchanged)
+                        # Single-object path
                         pred = outputs['pred_masks'][:, 0] if outputs['pred_masks'].dim() == 4 else outputs['pred_masks']
                         if pred.shape[-2:] != view_gt.shape[-2:]:
                             pred = F.interpolate(pred.unsqueeze(1), size=view_gt.shape[-2:], mode='bilinear', align_corners=False).squeeze(1)
 
-                        # Main losses: focal + dice
-                        loss = args.focal_weight * focal_loss(pred, view_gt, alpha=args.focal_alpha, gamma=args.focal_gamma) + args.dice_weight * dice_loss(pred.unsqueeze(1), view_gt.unsqueeze(1))
+                        if getattr(base_model, 'use_sam3_loss', False):
+                            # SAM3 official loss replaces the custom focal+dice (mirrors
+                            # research train_2d_improved.py:9176-9184). Operates on per-query
+                            # outputs['all_masks'] [B, Q, H, W] + pred_logits [B, Q] vs
+                            # view_gt [B, H, W]. Presence/align/centroid losses below still
+                            # apply, matching the research recipe.
+                            sam3_valid = (view_gt.sum(dim=(-2, -1)) > 0)
+                            loss, _ = base_model._compute_sam3_loss(outputs, view_gt, valid_mask=sam3_valid)
+                        else:
+                            # Main losses: focal + dice
+                            loss = args.focal_weight * focal_loss(pred, view_gt, alpha=args.focal_alpha, gamma=args.focal_gamma) + args.dice_weight * dice_loss(pred.unsqueeze(1), view_gt.unsqueeze(1))
 
                     # Presence loss: predict 1.0 when object exists, 0.0 when empty
                     # This always runs (even for empty views) to train presence detection

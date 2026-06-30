@@ -124,6 +124,18 @@ class ModelConfig:
 
     train_seghead: bool = False
 
+    use_sam3_heads: bool = False
+    # Proper-head recipe: route GASA queries through SAM3's prompt-conditioned native
+    # segmentation head + dot_prod_scoring (clean masks) instead of the bare mask_predictor
+
+    use_sam3_loss: bool = False
+    # Use SAM3's official single-object loss (BinaryHungarianMatcherV2 + IABCEMdetr + Masks)
+    # instead of the custom focal+dice (single-object / sequential path only)
+
+    train_pixel_decoder: bool = False
+    # Unfreeze pixel_decoder + instance_seg_head so trained pixel features are used
+    # (saved/loaded via the 'sam3_seghead' checkpoint key)
+
 
 @dataclass
 class GASAConfig:

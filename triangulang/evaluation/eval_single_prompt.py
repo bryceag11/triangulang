@@ -13,6 +13,7 @@ from tqdm import tqdm
 from PIL import Image
 
 from triangulang.models.triangulang_model import TrianguLangModel
+from triangulang.models.model_utils import run_sam3_proper_heads
 from triangulang.utils.prompt_augmentor import PromptAugmentor
 from triangulang.utils.scannetpp_loader import normalize_label, is_excluded_frame, SCANNETPP_SKIP_LABELS
 from triangulang.utils.spatial_reasoning import (
@@ -224,11 +225,25 @@ def evaluate_multiview_single_prompt(
         # Get pixel embeddings for this view
         fpn_features = fpn_features_list[i]
         with autocast('cuda', dtype=torch.float16):
-            pixel_embed = model.sam3.segmentation_head.pixel_decoder(fpn_features)
-            instance_embeds = model.sam3.segmentation_head.instance_seg_head(pixel_embed)
+            if getattr(model, 'use_sam3_heads', False):
+                # Proper-head recipe: prompt-conditioned SAM3 seghead + dot_prod_scoring,
+                # conditioned on this view's encoder features/prompt (mirrors research
+                # train_2d_improved.py:4613-4637). Yields clean, non-blobby masks.
+                mask_preds, _ = run_sam3_proper_heads(
+                    model.sam3, queries,
+                    fpn_features=fpn_features,
+                    img_ids=torch.zeros(1, device=device, dtype=torch.long),
+                    vis_feat_sizes=encoder_out['vis_feat_sizes'],
+                    encoder_hidden_states=encoder_out['encoder_hidden_states'][:, i:i+1, :].contiguous(),
+                    prompt=prompt[:, i:i+1, :].contiguous(),
+                    prompt_mask=prompt_mask[i:i+1, :].contiguous(),
+                )
+            else:
+                pixel_embed = model.sam3.segmentation_head.pixel_decoder(fpn_features)
+                instance_embeds = model.sam3.segmentation_head.instance_seg_head(pixel_embed)
 
-            # Predict mask using shared queries
-            mask_preds = model.sam3.segmentation_head.mask_predictor(queries, instance_embeds)  # [1, Q, H, W]
+                # Predict mask using shared queries
+                mask_preds = model.sam3.segmentation_head.mask_predictor(queries, instance_embeds)  # [1, Q, H, W]
 
         # Select best mask by confidence
         pred_logits = mask_preds.mean(dim=(-2, -1))

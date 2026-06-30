@@ -73,7 +73,9 @@ class TrianguLangModel(nn.Module):
                  use_text_spatial_bias: bool = False,
                  use_image_to_token: bool = False,
                  use_pos_refine: bool = False,
-                 use_box_rpb: bool = False):
+                 use_box_rpb: bool = False,
+                 use_sam3_heads: bool = False, use_sam3_loss: bool = False,
+                 train_pixel_decoder: bool = False):
         super().__init__()
         self.per_text_decode = per_text_decode
         self.sam3 = sam3_model
@@ -142,6 +144,27 @@ class TrianguLangModel(nn.Module):
         for p in self.sam3.segmentation_head.parameters():
             p.requires_grad_(train_seghead)
 
+        # Proper-head recipe flags. All default False, which preserves the legacy bare
+        # mask_predictor path (v10 / OLD-heads checkpoints). When True (gasa_generalist /
+        # camframe checkpoints) GASA queries flow through SAM3's prompt-conditioned native
+        # segmentation head + dot_prod_scoring, which produces clean, non-blobby masks.
+        self.use_sam3_heads = use_sam3_heads
+        self.use_sam3_loss = use_sam3_loss
+        self.train_pixel_decoder = train_pixel_decoder
+        self._sam3_pred_logits_override = None
+
+        # Optionally unfreeze the pixel_decoder + instance_seg_head sub-modules of the
+        # segmentation_head (without unfreezing the whole head via train_seghead) so the
+        # trained pixel features (loaded from the 'sam3_seghead' checkpoint key) are used.
+        # Mirrors research train_2d_improved.py:2555-2561.
+        if train_pixel_decoder and not train_seghead:
+            if hasattr(self.sam3.segmentation_head, 'pixel_decoder'):
+                for p in self.sam3.segmentation_head.pixel_decoder.parameters():
+                    p.requires_grad_(True)
+            if hasattr(self.sam3.segmentation_head, 'instance_seg_head'):
+                for p in self.sam3.segmentation_head.instance_seg_head.parameters():
+                    p.requires_grad_(True)
+
         # Pointmap computer
         self.pointmap_computer = PointmapComputer()
 
@@ -202,6 +225,131 @@ class TrianguLangModel(nn.Module):
         if use_mask_refiner:
             self.mask_refiner = MaskRefiner(in_channels=1, img_channels=3, hidden_dim=32)
 
+        # SAM3 official loss components (--use-sam3-loss): BinaryHungarianMatcherV2 +
+        # IABCEMdetr + Masks, matching how gasa_generalist was optimized. Mirrors research
+        # train_2d_improved.py:2737-2759 (the unused Boxes loss is omitted: ScanNet++ has no
+        # GT boxes and _compute_sam3_loss never invokes it). sam3.train.* is a training-only,
+        # heavy optional dependency, so it is imported lazily here (only when the flag is on)
+        # to keep inference/eval lean.
+        if use_sam3_loss:
+            from sam3.train.matcher import BinaryHungarianMatcherV2
+            from sam3.train.loss.loss_fns import IABCEMdetr, Masks
+            self.sam3_matcher = BinaryHungarianMatcherV2(
+                cost_class=2.0, cost_bbox=5.0, cost_giou=2.0,
+                focal=True, alpha=0.25, gamma=2.0,
+            )
+            self.sam3_ce_loss = IABCEMdetr(
+                pos_weight=10.0, alpha=0.25, gamma=2,
+                weight_dict={"loss_ce": 20.0},
+                pos_focal=False, weak_loss=False, use_presence=False,
+                pad_n_queries=200, pad_scale_pos=1.0, compute_aux=True,
+            )
+            self.sam3_mask_loss = Masks(
+                weight_dict={"loss_mask": 200.0, "loss_dice": 10.0},
+                focal_alpha=0.25, focal_gamma=2.0, compute_aux=False,
+            )
+
+    def _compute_sam3_loss(self, outputs, gt_masks, valid_mask=None):
+        """Compute SAM3 official single-object loss (matcher + IABCEMdetr + Masks).
+
+        Bypasses the custom focal/dice losses and uses SAM3's loss components directly,
+        mirroring research train_2d_improved.py:2761-2877. Per-query boxes are derived
+        from per-query masks (the model has no box head) to feed the Hungarian matcher;
+        the actual loss flows through the mask + classification terms.
+
+        Args:
+            outputs: dict from forward containing 'all_masks' [B, Q, H, W] and
+                'pred_logits' [B, Q]. Boxes are derived from masks.
+            gt_masks: [B, H, W] binary GT masks (one object per batch item).
+            valid_mask: optional [B] bool tensor; items with empty/missing GT are excluded.
+
+        Returns:
+            (total_loss, loss_dict): scalar total loss and dict of named components.
+        """
+        from sam3.model.box_ops import box_cxcywh_to_xyxy
+        from sam3.train.loss.loss_fns import CORE_LOSS_KEY
+
+        device = gt_masks.device
+        B = gt_masks.shape[0]
+
+        if valid_mask is None:
+            valid_mask = (gt_masks.sum(dim=(-2, -1)) > 0)
+        valid_mask = valid_mask.bool()
+
+        if 'all_masks' not in outputs:
+            raise RuntimeError("use_sam3_loss requires outputs['all_masks'] (per-query masks)")
+        all_masks = outputs['all_masks']  # [B, Q, H, W]
+        if all_masks.dim() != 4:
+            raise RuntimeError(f"Expected all_masks shape [B, Q, H, W], got {all_masks.shape}")
+        Bm = all_masks.shape[0]
+        pred_logits = outputs['pred_logits']  # [B, Q]
+        if pred_logits.dim() == 2:
+            pred_logits = pred_logits.unsqueeze(-1)  # [B, Q, 1]
+
+        # Derive cxcywh-normalized boxes from each query's binary mask. These are a "soft GT"
+        # for the matcher only (no grad); the loss flows via Masks + IABCEMdetr.
+        with torch.no_grad():
+            pred_bin = (torch.sigmoid(all_masks) > 0.5).float()  # [B, Q, H, W]
+            pred_boxes_list = [
+                self.mask_to_box_batched(pred_bin[b], jitter_ratio=0.0, expand_ratio=0.0)
+                for b in range(Bm)
+            ]
+            pred_boxes_cxcywh = torch.stack(pred_boxes_list, dim=0)  # [B, Q, 4]
+            pred_boxes_xyxy = box_cxcywh_to_xyxy(pred_boxes_cxcywh)
+
+        sam3_outputs = {
+            'pred_logits': pred_logits,
+            'pred_boxes': pred_boxes_cxcywh,
+            'pred_boxes_xyxy': pred_boxes_xyxy,
+            'pred_masks': all_masks,
+        }
+
+        keep_idx = valid_mask.nonzero(as_tuple=False).squeeze(1)
+        if keep_idx.numel() == 0:
+            # All-empty batch: return zero loss (graph stays connected via outputs * 0).
+            zero = (all_masks.sum() + pred_logits.sum()) * 0.0
+            return zero, {'sam3_loss_total': zero.detach()}
+
+        with torch.no_grad():
+            gt_for_box = gt_masks.float()
+            tgt_boxes_cxcywh = self.mask_to_box_batched(gt_for_box, jitter_ratio=0.0, expand_ratio=0.0)  # [B, 4]
+            tgt_boxes_xyxy = box_cxcywh_to_xyxy(tgt_boxes_cxcywh)
+
+        # Pack targets across the batch. Single-object: 1 GT box/mask per valid item.
+        num_boxes = torch.zeros(B, dtype=torch.long, device=device)
+        num_boxes[valid_mask] = 1
+        boxes_packed = tgt_boxes_cxcywh[valid_mask]                 # [V, 4]
+        boxes_xyxy_packed = tgt_boxes_xyxy[valid_mask]              # [V, 4]
+        masks_packed = gt_masks[valid_mask].to(all_masks.dtype)    # [V, H, W]
+        is_valid_mask = torch.ones(masks_packed.shape[0], dtype=torch.bool, device=device)
+
+        boxes_padded = torch.zeros(B, 1, 4, device=device, dtype=tgt_boxes_cxcywh.dtype)
+        boxes_padded[valid_mask, 0] = tgt_boxes_cxcywh[valid_mask]
+
+        sam3_targets = {
+            'num_boxes': num_boxes,
+            'boxes': boxes_packed,
+            'boxes_xyxy': boxes_xyxy_packed,
+            'boxes_padded': boxes_padded,
+            'masks': masks_packed,
+            'is_valid_mask': is_valid_mask,
+            'is_exhaustive': torch.ones(B, dtype=torch.bool, device=device),
+        }
+
+        indices = self.sam3_matcher(sam3_outputs, sam3_targets)
+        num_boxes_norm = torch.clamp(num_boxes.sum().float(), min=1.0)
+
+        ce_losses = self.sam3_ce_loss(sam3_outputs, sam3_targets, indices, num_boxes_norm, is_aux=False)
+        mask_losses = self.sam3_mask_loss(sam3_outputs, sam3_targets, indices, num_boxes_norm, is_aux=False)
+
+        total = ce_losses.pop(CORE_LOSS_KEY) + mask_losses.pop(CORE_LOSS_KEY)
+        loss_dict = {}
+        for k, v in ce_losses.items():
+            loss_dict[f'sam3_{k}'] = v.detach() if torch.is_tensor(v) else v
+        for k, v in mask_losses.items():
+            loss_dict[f'sam3_{k}'] = v.detach() if torch.is_tensor(v) else v
+        loss_dict['sam3_loss_total'] = total.detach() if torch.is_tensor(total) else total
+        return total, loss_dict
 
     def set_profile(self, e): _mu.set_profile(self, e)
     def _profile_start(self): return _mu._profile_start(self)
@@ -889,20 +1037,34 @@ class TrianguLangModel(nn.Module):
 
         # 6. Run SAM3's segmentation head
         t0 = self._profile_start()
-        with torch.no_grad():
-            fpn_features = backbone_out['backbone_fpn']
-            pixel_embed = self.sam3.segmentation_head.pixel_decoder(fpn_features)
-            instance_embeds = self.sam3.segmentation_head.instance_seg_head(pixel_embed)
+        if self.use_sam3_heads:
+            # Proper-head recipe: route GASA queries through SAM3's prompt-conditioned
+            # segmentation head + dot_prod_scoring (mirrors research forward
+            # train_2d_improved.py:4613-4637,4670-4671). Yields clean, non-blobby masks.
+            mask_preds, self._sam3_pred_logits_override = _mu.run_sam3_proper_heads(
+                self.sam3, queries,
+                fpn_features=backbone_out['backbone_fpn'],
+                img_ids=find_input.img_ids,
+                vis_feat_sizes=encoder_out['vis_feat_sizes'],
+                encoder_hidden_states=encoder_out['encoder_hidden_states'],
+                prompt=prompt, prompt_mask=prompt_mask,
+            )
+        else:
+            with torch.no_grad():
+                fpn_features = backbone_out['backbone_fpn']
+                pixel_embed = self.sam3.segmentation_head.pixel_decoder(fpn_features)
+                instance_embeds = self.sam3.segmentation_head.instance_seg_head(pixel_embed)
 
-        # SAM3-MO: instance_embeds is [B_orig, D, H, W]. Expand to [B_orig*K, D, H, W]
-        # to match queries which are [B_orig*K, Q, D]. FPN was NOT expanded (too large).
-        if sam3_mo_mode and hasattr(self, '_sam3_mo_K'):
-            instance_embeds = instance_embeds.repeat_interleave(self._sam3_mo_K, dim=0)
+            # SAM3-MO: instance_embeds is [B_orig, D, H, W]. Expand to [B_orig*K, D, H, W]
+            # to match queries which are [B_orig*K, Q, D]. FPN was NOT expanded (too large).
+            if sam3_mo_mode and hasattr(self, '_sam3_mo_K'):
+                instance_embeds = instance_embeds.repeat_interleave(self._sam3_mo_K, dim=0)
 
-        mask_preds = self.sam3.segmentation_head.mask_predictor(queries, instance_embeds)
+            mask_preds = self.sam3.segmentation_head.mask_predictor(queries, instance_embeds)
+            self._sam3_pred_logits_override = None
 
         # Mask refinement: upsample with learned convolutions + image guidance
-        if self.use_mask_refiner:
+        if self.use_mask_refiner and not self.use_sam3_heads:
             mask_preds = self.mask_refiner(mask_preds, images)
         self._profile_end("6_SAM3_seghead", t0)
 
@@ -917,9 +1079,12 @@ class TrianguLangModel(nn.Module):
             best_idx = torch.zeros(B, dtype=torch.long, device=device)
         else:
             # pred_logits source controlled by --pred-logits-source:
+            #   sam3_heads: pred_logits = SAM3 dot_prod_scoring override (proper-head recipe)
             #   mask_mean: pred_logits = mask_preds.mean(), old text-agnostic behavior (proven, default)
             #   text_scoring: pred_logits = joint_scores, text-aware via DotProductScoring
-            if self.pred_logits_source == 'text_scoring' and joint_scores is not None:
+            if self.use_sam3_heads and getattr(self, '_sam3_pred_logits_override', None) is not None:
+                pred_logits = self._sam3_pred_logits_override  # SAM3 dot_prod_scoring (research 4670-4671)
+            elif self.pred_logits_source == 'text_scoring' and joint_scores is not None:
                 pred_logits = joint_scores  # [B, Q] - text-query × presence scores
             else:
                 pred_logits = mask_preds.mean(dim=(-2, -1))  # [B, Q] - text-agnostic (default)

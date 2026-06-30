@@ -11,6 +11,57 @@ import numpy as np
 from sam3.model.geometry_encoders import Prompt
 from sam3.model.data_misc import FindStage
 
+
+def run_sam3_proper_heads(sam3, queries, fpn_features, img_ids, vis_feat_sizes,
+                          encoder_hidden_states, prompt, prompt_mask):
+    """Route GASA queries through SAM3's prompt-conditioned segmentation head.
+
+    Mirrors the research proper-head forward
+    (mv_extensions/training/train_2d_improved.py:4613-4637,4670-4671): runs
+    ``sam3._run_segmentation_heads`` (whose ``cross_attend_prompt`` conditions the
+    encoder features on the text prompt, then ``_embed_pixels`` substitutes them
+    into the top FPN level before the pixel_decoder) and sources per-query scores
+    from ``sam3.dot_prod_scoring``. This replaces the bare ``mask_predictor`` path,
+    which is prompt-agnostic and yields blobby masks.
+
+    Args:
+        sam3: SAM3 image model (provides ``_run_segmentation_heads`` + ``dot_prod_scoring``).
+        queries: ``[B, Q, D]`` GASA queries already projected to SAM3's 256-dim token space.
+        fpn_features: list of backbone FPN maps for the items in this batch.
+        img_ids: long tensor indexing ``fpn_features`` (consumed by ``_embed_pixels``).
+        vis_feat_sizes: encoder visual feature sizes (passed through to SAM3).
+        encoder_hidden_states: ``[L, B, D]`` seq-first encoder memory.
+        prompt: ``[seq, B, D]`` seq-first text prompt embeddings.
+        prompt_mask: ``[B, seq]`` prompt padding mask (True == padding).
+
+    Returns:
+        ``(mask_preds [B, Q, H, W], pred_logits [B, Q] | None)`` where ``pred_logits``
+        are SAM3 dot-product text-image scores per query (``None`` if the model has no
+        ``dot_prod_scoring`` head).
+    """
+    out = {"encoder_hidden_states": encoder_hidden_states}
+    hs = queries.unsqueeze(0)  # [1, B, Q, D]; _run_segmentation_heads expects layer-first hs
+    sam3._run_segmentation_heads(
+        out=out,
+        backbone_out={"backbone_fpn": fpn_features},
+        img_ids=img_ids,
+        vis_feat_sizes=vis_feat_sizes,
+        encoder_hidden_states=encoder_hidden_states,
+        prompt=prompt,
+        prompt_mask=prompt_mask,
+        hs=hs,
+    )
+    mask_preds = out["pred_masks"]  # [B, Q, H, W]
+
+    pred_logits = None
+    if getattr(sam3, "dot_prod_scoring", None) is not None:
+        sam3_class = sam3.dot_prod_scoring(hs, prompt, prompt_mask)  # [L, B, Q, 1]
+        if sam3_class.dim() == 4:
+            sam3_class = sam3_class[-1].squeeze(-1)  # [B, Q]
+        pred_logits = sam3_class
+    return mask_preds, pred_logits
+
+
 def set_profile(self, enabled: bool):
     """Enable/disable profiling mode."""
     self.profile = enabled
@@ -962,13 +1013,26 @@ def forward_multiview(self, images, text_prompts, gt_masks=None,
         # backbone_out has features for B*N images
         view_fpn_features = [f[v::N] for f in backbone_out['backbone_fpn']]
 
-        # Run SAM3's segmentation head
-        with torch.no_grad():
-            pixel_embed = self.sam3.segmentation_head.pixel_decoder(view_fpn_features)
-            instance_embeds = self.sam3.segmentation_head.instance_seg_head(pixel_embed)
+        if getattr(self, 'use_sam3_heads', False):
+            # Proper-head recipe: prompt-conditioned SAM3 seghead, conditioned on this
+            # view's encoder features/prompt (slice view v out of the B*N batch).
+            mask_preds, _ = run_sam3_proper_heads(
+                self.sam3, queries,
+                fpn_features=view_fpn_features,
+                img_ids=torch.arange(B, device=queries.device, dtype=torch.long),
+                vis_feat_sizes=encoder_out['vis_feat_sizes'],
+                encoder_hidden_states=encoder_out['encoder_hidden_states'][:, v::N, :].contiguous(),
+                prompt=prompt[:, v::N, :].contiguous(),
+                prompt_mask=prompt_mask[v::N, :].contiguous(),
+            )
+        else:
+            # Run SAM3's segmentation head (bare mask_predictor path)
+            with torch.no_grad():
+                pixel_embed = self.sam3.segmentation_head.pixel_decoder(view_fpn_features)
+                instance_embeds = self.sam3.segmentation_head.instance_seg_head(pixel_embed)
 
-        # Get mask predictions using shared queries
-        mask_preds = self.sam3.segmentation_head.mask_predictor(queries, instance_embeds)  # [B, Q, H, W]
+            # Get mask predictions using shared queries
+            mask_preds = self.sam3.segmentation_head.mask_predictor(queries, instance_embeds)  # [B, Q, H, W]
         all_view_masks.append(mask_preds)
 
     # Stack: [B, N, Q, H, W]

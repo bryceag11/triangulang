@@ -209,6 +209,8 @@ def load_model(checkpoint_path: str, device: str = 'cuda', da3_resolution: int =
         use_depth_crossattn=config.get('use_depth_crossattn', False),
         grouped_text_attn=config.get('grouped_text_attn', False),
         per_text_decode=config.get('per_text_decode', False),
+        use_sam3_heads=config.get('use_sam3_heads', False),
+        train_pixel_decoder=config.get('train_pixel_decoder', False),
     ).to(device)
 
     # Load checkpoint weights
