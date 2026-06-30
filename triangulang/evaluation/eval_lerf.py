@@ -25,9 +25,7 @@ from triangulang.data.lerf_ovs_dataset import (
 from triangulang.utils.spatial_reasoning import parse_spatial_qualifier, get_spatial_qualifier_idx
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 def _build_spatial_instance_map(args, dataset):
     """Pre-compute spatial qualifiers for multi-instance categories (e.g. knives).
@@ -215,9 +213,7 @@ def _save_visualization(scene_viz_dir, batch_idx, prompt, dataset_prompt,
     plt.close(fig)
 
 
-# ---------------------------------------------------------------------------
 # Metrics accumulator
-# ---------------------------------------------------------------------------
 
 class _MetricsAccumulator:
     """Lightweight container for IoU + localization metrics across scenes/frames/categories."""
@@ -269,9 +265,7 @@ class _MetricsAccumulator:
                 self.__dict__[key_group][k]['loc_bbox'].extend(v['loc_bbox'])
 
 
-# ---------------------------------------------------------------------------
 # Single-object eval
-# ---------------------------------------------------------------------------
 
 def _run_single_object_eval(model, args, device, ddp, eval_dataset, dataloader,
                             acc, spatial_instance_map, save_viz, viz_dir):
@@ -406,9 +400,7 @@ def _run_multiview_inference(model, images, intrinsics, prompt, sq_tensor, devic
     )
 
 
-# ---------------------------------------------------------------------------
 # Multi-object eval
-# ---------------------------------------------------------------------------
 
 def _run_multi_object_eval(model, args, device, ddp, eval_dataset, acc):
     """Multi-object LERF evaluation using Hungarian matching."""
@@ -527,9 +519,7 @@ def _run_multi_object_eval(model, args, device, ddp, eval_dataset, acc):
             continue
 
 
-# ---------------------------------------------------------------------------
 # Results aggregation
-# ---------------------------------------------------------------------------
 
 def _aggregate_results(acc, args, ddp, save_viz, viz_dir, output_dir):
     """DDP gather, print results table, save JSON. Returns results dict."""
@@ -647,9 +637,7 @@ def _aggregate_results(acc, args, ddp, save_viz, viz_dir, output_dir):
     return results
 
 
-# ---------------------------------------------------------------------------
 # Main entry point
-# ---------------------------------------------------------------------------
 
 def _evaluate_lerf(model, args, device, ddp, data_root, output_dir, viz_dir):
     logger.info("LERF-OVS Evaluation")

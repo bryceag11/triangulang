@@ -87,7 +87,6 @@ def _setup_config(args):
                 break
 
         if config_path:
-            import json
             with open(config_path) as f:
                 saved_config = json.load(f)
 
@@ -208,7 +207,6 @@ def _init_environment(args, ddp):
 
 
 def _load_datasets(args, ddp):
-    import json
     dataset_config = get_dataset_config(args.dataset)
     data_root = args.data_root or str(PROJECT_ROOT / dataset_config.get('data_root', f'data/{args.dataset}'))
     split = args.split or dataset_config.get('split', 'train')
@@ -853,7 +851,6 @@ def _save_checkpoint(base_model, optimizer, scheduler, scaler, lora_manager, arg
 def _finalize_epoch(epoch, args, ddp, device, optimizer, cat_metrics, epoch_loss, epoch_iou,
                     epoch_macc, epoch_recall, epoch_sheaf_loss, epoch_centroid_errors,
                     num_samples, start_epoch, base_model, last_vis_data, run_dir):
-    import json
     if num_samples > 0:
         avg_loss = epoch_loss / num_samples
         avg_iou = epoch_iou / num_samples
@@ -914,7 +911,6 @@ def _finalize_epoch(epoch, args, ddp, device, optimizer, cat_metrics, epoch_loss
 def _run_validation_and_save(model, val_dataloader, base_model, optimizer, scheduler, scaler,
                               lora_manager, args, device, ddp, epoch, best_iou, best_val_miou,
                               checkpoint_dir):
-    import json
     val_metrics = None
     if args.val_every > 0 and val_dataloader is not None and (epoch + 1) % args.val_every == 0:
         logger.info(f"  Running validation...")

@@ -438,7 +438,6 @@ def generate_single_object_viz(
     overlay_alpha = getattr(args, 'paper_viz_overlay_alpha', 0.5)
 
     # Check how many scenes we have
-    from collections import defaultdict
     scenes_in_pool = set(v.get('scene_id', 'unknown') for v in viz_pool)
     multi_scene = len(scenes_in_pool) > 1
     logger.info(f"  [single-object-viz] {len(viz_pool)} samples from {len(scenes_in_pool)} scene(s)")

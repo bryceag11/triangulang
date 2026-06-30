@@ -314,18 +314,6 @@ class SheafConsistencyLoss(nn.Module):
                 diff = diff[has_valid]
                 correspondence_confidence = correspondence_confidence[has_valid]
 
-                # Debug: log soft correspondence quality periodically
-                if not hasattr(self, '_soft_log_counter'):
-                    self._soft_log_counter = 0
-                self._soft_log_counter += 1
-                if self._soft_log_counter % 5000 == 1:
-                    min_dists = dists.min(dim=-1).values
-                    median_dist = min_dists.median().item()
-                    mean_conf = correspondence_confidence.mean().item()
-                    high_conf = (correspondence_confidence > 0.5).float().mean().item() * 100
-                    print(f"[Sheaf-Soft] median_dist: {median_dist:.3f}m, mean_weight: {mean_conf:.2f}, "
-                          f"high_conf(>0.5): {high_conf:.0f}%, valid: {has_valid.sum().item()}/{len(has_valid)}")
-
                 # Loss: weighted by correspondence confidence
                 loss = (diff * correspondence_confidence).sum() / (correspondence_confidence.sum() + 1e-6)
             else:
@@ -346,18 +334,6 @@ class SheafConsistencyLoss(nn.Module):
                     valid_corresp = valid_corresp & is_mutual
 
                 valid_corresp_f = valid_corresp.float()
-
-                # Debug: log correspondence stats periodically
-                if not hasattr(self, '_log_counter'):
-                    self._log_counter = 0
-                self._log_counter += 1
-                if self._log_counter % 5000 == 1:
-                    n_valid = valid_corresp_f.sum().item()
-                    n_total = len(valid_corresp_f)
-                    median_dist = min_dists_ij.median().item()
-                    mutual_str = " (mutual NN)" if self.mutual_nn else ""
-                    print(f"[Sheaf] corresp: {n_valid:.0f}/{n_total} ({100*n_valid/n_total:.1f}%){mutual_str}, "
-                          f"median_dist: {median_dist:.3f}m")
 
                 if valid_corresp_f.sum() < 5:
                     continue

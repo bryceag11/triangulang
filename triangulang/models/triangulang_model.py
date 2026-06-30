@@ -356,12 +356,6 @@ class TrianguLangModel(nn.Module):
                 intrinsics_scaled[:, 1, 1] = intrinsics[:, 1, 1] * scale_y  # fy
                 intrinsics_scaled[:, 0, 2] = intrinsics[:, 0, 2] * scale_x  # cx
                 intrinsics_scaled[:, 1, 2] = intrinsics[:, 1, 2] * scale_y  # cy
-                # Debug: log the scaling (should be 1.00 if dataloader handled it)
-                if not hasattr(self, '_intrinsics_scale_logged'):
-                    self._intrinsics_scale_logged = True
-                    import torch.distributed as _dist
-                    if not _dist.is_initialized() or _dist.get_rank() == 0:
-                        print(f"[Intrinsics] Scaled from depth input ({cache_w}×{cache_h}) to model res ({depth_w}×{depth_h}): scale_x={scale_x:.2f}, scale_y={scale_y:.2f}")
             else:
                 # DA3 estimated intrinsics from live inference are already at SAM3 res
                 intrinsics_scaled = intrinsics.clone()
