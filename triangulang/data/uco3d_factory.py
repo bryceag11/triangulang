@@ -1,7 +1,7 @@
 """Factory functions for creating UCO3D dataset instances."""
-from typing import Dict, List, Tuple, Optional, Union
+import random
+from typing import Dict, List, Tuple, Optional
 from triangulang.data.uco3d_dataset import UCO3DMultiViewDataset
-from triangulang.data.uco3d_utils import normalize_prompt
 
 
 
@@ -84,8 +84,6 @@ def get_uco3d_train_eval_split(
     Returns:
         (train_sequences, eval_sequences) - lists of sequence paths
     """
-    import random
-
     # Create temporary dataset to get all sequences
     temp_dataset = UCO3DMultiViewDataset(
         data_root=data_root,

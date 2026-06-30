@@ -4,7 +4,7 @@
 last 60 have the target object with masks in images_4/label/.
 """
 
-import json
+import argparse
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import random
@@ -62,7 +62,6 @@ def load_poses_bounds(poses_bounds_path: Path) -> Dict[str, Dict]:
         pose_3x5 = pb[:15].reshape(3, 5)
         R = pose_3x5[:, :3]  # 3x3 rotation
         t = pose_3x5[:, 3]   # 3 translation
-        hwf = pose_3x5[:, 4] # h, w, f (but actually this is [down, right, backwards] basis)
 
         # Near/far bounds
         near, far = pb[15], pb[16]
@@ -497,7 +496,6 @@ Storage: ~6 GB (spinnerf-dataset.zip)
 
 
 if __name__ == '__main__':
-    import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--data-root', type=str, default='data/spinnerf')
     parser.add_argument('--download', action='store_true', help='Show download instructions')

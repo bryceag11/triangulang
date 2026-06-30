@@ -10,6 +10,13 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 import torch
 from PIL import Image
+from scipy import ndimage
+
+import triangulang
+from triangulang.utils.scannetpp_base import normalize_label
+from triangulang.utils.scannetpp_io import load_nerfstudio_transforms
+
+logger = triangulang.get_logger(__name__)
 
 try:
     import open3d as o3d
@@ -24,15 +31,6 @@ except ImportError:
     HAS_TRIMESH = False
 
 
-def _normalize_label_local(label: str, label_fixes: dict) -> str:
-    """Local copy of normalize_label to avoid circular imports."""
-    label = label.strip()
-    while '  ' in label:
-        label = label.replace('  ', ' ')
-    label = label.rstrip(']').rstrip('[').strip()
-    return label_fixes.get(label, label)
-
-
 def load_vertex_object_ids(scene_path: Path) -> Tuple[np.ndarray, Dict]:
     """
     Load vertex-to-object-ID mapping from annotations.
@@ -41,8 +39,6 @@ def load_vertex_object_ids(scene_path: Path) -> Tuple[np.ndarray, Dict]:
         vertex_obj_ids: (N_vertices,) array mapping each vertex to object ID (0 = background)
         objects: Dict mapping obj_id -> {label, segments, obb, ...}
     """
-    from triangulang.utils.scannetpp_loader import normalize_label
-
     # Load segments.json (vertex -> segment)
     segments_file = scene_path / "scans" / "segments.json"
     with open(segments_file) as f:
@@ -258,7 +254,7 @@ class SceneRasterizer:
         try:
             self.vertex_obj_ids, self.objects = load_vertex_object_ids(self.scene_path)
         except Exception as e:
-            print(f"Warning: Failed to load annotations: {e}")
+            logger.warning(f"Failed to load annotations: {e}")
             self.vertex_obj_ids = None
             self.objects = {}
 
@@ -268,7 +264,6 @@ class SceneRasterizer:
         else:
             transforms_path = self.scene_path / "dslr" / "nerfstudio" / "transforms.json"
 
-        from triangulang.utils.scannetpp_io import load_nerfstudio_transforms
         self.transforms = load_nerfstudio_transforms(transforms_path)
 
         # Build frame lookup
@@ -338,7 +333,6 @@ class SceneRasterizer:
 
         visible = get_objects_in_image(pix_obj_ids, min_coverage)
 
-        from triangulang.utils.scannetpp_loader import normalize_label
         result = []
         for obj_id, coverage in visible:
             label = normalize_label(self.objects.get(obj_id, {}).get('label', 'unknown'))
@@ -405,7 +399,7 @@ class SceneRasterizer:
         try:
             raster = rasterize_mesh_o3d(self.mesh, intrinsics, c2w, H, W)
         except Exception as e:
-            print(f"Rasterization failed for {image_name}: {e}")
+            logger.warning(f"Rasterization failed for {image_name}: {e}")
             return None
 
         # Cache result
@@ -428,7 +422,7 @@ def get_scene_3d_annotations(scene_path: Path) -> Optional[Dict]:
     Requires trimesh library.
     """
     if not HAS_TRIMESH:
-        print("Warning: trimesh not installed. Cannot load 3D annotations.")
+        logger.warning("trimesh not installed. Cannot load 3D annotations.")
         return None
 
     mesh_path = scene_path / "scans" / "mesh_aligned_0.05_semantic.ply"
@@ -510,7 +504,6 @@ def project_mesh_to_mask(
     mask[y, x] = 1.0
 
     # Dilate to fill gaps
-    from scipy import ndimage
     mask = ndimage.binary_dilation(mask, iterations=3).astype(np.float32)
 
     return mask

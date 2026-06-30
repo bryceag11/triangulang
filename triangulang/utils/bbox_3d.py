@@ -6,8 +6,6 @@ Post-processing only: no model changes, zero inference cost.
 """
 
 import torch
-import torch.nn.functional as F
-from typing import Optional, List
 
 from triangulang.models.sheaf_embeddings import compute_3d_localization
 

@@ -2,85 +2,21 @@
 import json
 import numpy as np
 import torch
-import torch.nn.functional as F
+import torch.nn as nn
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+from sam3 import build_sam3_image_model
+from depth_anything_3.api import DepthAnything3
 
 from triangulang.models.triangulang_model import TrianguLangModel
 from triangulang.utils.lora import LoRAManager, LoRALayer
 from triangulang.utils.scannetpp_loader import normalize_label, is_excluded_frame
+from triangulang.evaluation.baseline_sam3 import BaselineSAM3Wrapper  # re-exported for callers
 from triangulang import BPE_PATH as _BPE_PATH
 import triangulang
 
 logger = triangulang.get_logger(__name__)
-
-
-class BaselineSAM3Wrapper(torch.nn.Module):
-    """Wrapper around native SAM3 for baseline comparison.
-
-    Runs SAM3's own text-prompted segmentation (encoder + decoder + seghead)
-    without GASA, depth, or cross-view fusion. Matches TrianguLangModel's
-    forward interface so the benchmark loop works unchanged.
-    """
-
-    def __init__(self, sam3_model, resolution=1008):
-        super().__init__()
-        self.sam3 = sam3_model
-        self.resolution = resolution
-        self.mask_selection = 'confidence'
-
-    @torch.no_grad()
-    def forward(self, images, text_prompts, gt_masks=None,
-                gt_intrinsics=None, gt_extrinsics=None, **kwargs):
-        from sam3.model.data_misc import FindStage
-
-        device = images.device
-        B = images.shape[0]
-
-        sam3_images = (images - 0.5) / 0.5
-        if sam3_images.shape[-2:] != (self.resolution, self.resolution):
-            sam3_images = F.interpolate(sam3_images, size=(self.resolution, self.resolution),
-                                        mode='bilinear', align_corners=False)
-
-        backbone_out = {"img_batch_all_stages": sam3_images}
-        backbone_out.update(self.sam3.backbone.forward_image(sam3_images))
-
-        text_out = self.sam3.backbone.forward_text(text_prompts, device=device)
-        backbone_out.update(text_out)
-
-        find_input = FindStage(
-            img_ids=torch.arange(B, device=device, dtype=torch.long),
-            text_ids=torch.arange(B, device=device, dtype=torch.long),
-            input_boxes=None, input_boxes_mask=None, input_boxes_label=None,
-            input_points=None, input_points_mask=None,
-        )
-        geometric_prompt = self.sam3._get_dummy_prompt(num_prompts=B)
-
-        outputs = self.sam3.forward_grounding(
-            backbone_out=backbone_out,
-            find_input=find_input,
-            find_target=None,
-            geometric_prompt=geometric_prompt,
-        )
-
-        pred_logits = outputs['pred_logits']
-        pred_masks = outputs['pred_masks']
-
-        scores = pred_logits.sigmoid()
-        if 'presence_logit_dec' in outputs:
-            presence = outputs['presence_logit_dec'].sigmoid()
-            scores = scores.squeeze(-1) * presence
-        else:
-            scores = scores.squeeze(-1)
-
-        best_idx = scores.argmax(dim=-1)
-        batch_idx = torch.arange(B, device=device)
-        best_masks = pred_masks[batch_idx, best_idx]
-
-        return {
-            'pred_masks': best_masks.unsqueeze(1),
-            'all_masks': pred_masks,
-        }
 
 
 def count_parameters(model):
@@ -102,9 +38,6 @@ def load_model(checkpoint_path: str, device: str = 'cuda', da3_resolution: int =
         resolution: Override model resolution/image size (default: use config or 1008)
         train_config_path: Optional explicit path to training config.json
     """
-    from sam3 import build_sam3_image_model
-    from depth_anything_3.api import DepthAnything3
-
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     ckpt_dir = Path(checkpoint_path).parent
 
@@ -238,7 +171,6 @@ def load_model(checkpoint_path: str, device: str = 'cuda', da3_resolution: int =
         logger.info(f"Loaded trained mask_embed from checkpoint")
 
     if 'lora' in checkpoint and checkpoint['lora'] is not None:
-        import torch.nn as nn
         lora_rank = config.get('lora_rank', 8)
         lora_alpha = config.get('lora_alpha', 16.0)
         lora_manager = LoRAManager(rank=lora_rank, alpha=lora_alpha)

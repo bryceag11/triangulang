@@ -1,12 +1,10 @@
 """Metrics utilities for segmentation evaluation."""
 
-import os
 import hashlib
 
 import torch
 import torch.nn.functional as F
 import torch.distributed as dist
-import numpy as np
 
 
 def compute_iou(pred, target, threshold=0.5, return_tensor=False):
@@ -64,7 +62,6 @@ def compute_per_mask_ious(mask_preds, gt_masks, threshold=0.5):
         ious: [B, Q] IoU for each mask
     """
     B, Q, H, W = mask_preds.shape
-    device = mask_preds.device
 
     # Handle both [B, H, W] and [B, 1, H, W] input shapes
     if gt_masks.dim() == 4:

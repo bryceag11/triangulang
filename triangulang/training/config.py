@@ -621,15 +621,8 @@ class TrainConfig:
         """
         defaults: dict = {}
         for group_field in fields(TrainConfig):
-            group_cls = group_field.type
-            # Resolve string annotations
-            if isinstance(group_cls, str):
-                group_cls = eval(group_cls)
-            # Handle default_factory
-            if group_field.default_factory is not type:
-                group_default = group_field.default_factory()
-            else:
-                group_default = group_cls()
+            # Every group is declared with field(default_factory=...).
+            group_default = group_field.default_factory()
             for f in fields(group_default):
                 defaults[f.name] = getattr(group_default, f.name)
         return defaults

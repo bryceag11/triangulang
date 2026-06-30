@@ -1,20 +1,13 @@
 """Training setup: config, environment, model building, checkpointing."""
 import os
-import sys
 import json
 import random
-import time
-import math
-import gc
-import psutil
 from pathlib import Path
 from datetime import datetime
 from collections import Counter
 
 import torch
-import torch.nn.functional as F
 import numpy as np
-from tqdm import tqdm
 
 from sam3 import build_sam3_image_model
 from depth_anything_3.api import DepthAnything3
@@ -22,18 +15,15 @@ from triangulang import BPE_PATH as _BPE_PATH
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 from triangulang.models.triangulang_model import TrianguLangModel
-from triangulang.utils.ddp_utils import DDPManager
 from triangulang.utils.lora import LoRALayer, LoRAManager
-from triangulang.utils.metrics import CategoryMetricsTracker
 from triangulang.data.dataset_factory import get_dataset, get_dataset_config
 from triangulang.training.config import TrainConfig
 from torch.amp import GradScaler
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR, StepLR
 from triangulang.utils.spatial_reasoning import SpatialAugmentor
 from triangulang.utils.spatial_context import GTAwareSpatialAugmentor
 from triangulang.losses.sheaf_losses import FeatureSheafLoss
 from triangulang.training.train_helpers import set_seed, collate_fn, run_validation, visualize_predictions
-from triangulang.utils.metrics import CategoryMetricsTracker
-from triangulang.data.dataset_factory import get_dataset, get_dataset_config
 from triangulang.utils.scannetpp_loader import ScanNetPPMultiViewDataset
 
 import triangulang
@@ -711,7 +701,6 @@ def _setup_training(model, base_model, args, device, ddp):
 
     scheduler = None
     if args.lr_scheduler == 'cosine':
-        from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
         warmup_epochs = min(args.lr_warmup_epochs, args.epochs - 1)
         cosine_epochs = max(1, args.epochs - warmup_epochs)
         warmup_scheduler = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs)
@@ -719,7 +708,6 @@ def _setup_training(model, base_model, args, device, ddp):
         scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[warmup_epochs])
         logger.debug(f"LR Scheduler: Cosine annealing with {warmup_epochs} warmup epochs, min_lr={args.lr_min}")
     elif args.lr_scheduler == 'step':
-        from torch.optim.lr_scheduler import StepLR
         scheduler = StepLR(optimizer, step_size=args.lr_step_size, gamma=args.lr_gamma)
         logger.debug(f"LR Scheduler: Step decay every {args.lr_step_size} epochs, gamma={args.lr_gamma}")
     else:

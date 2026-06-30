@@ -4,11 +4,16 @@ Returns the appropriate Dataset class for a given dataset name and config.
 Supported: scannetpp, nvos, spinnerf, uco3d, lerf_ovs.
 """
 
-from pathlib import Path
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple
+import torch
 from torch.utils.data import Dataset
 
 import triangulang
+from triangulang.utils.scannetpp_loader import ScanNetPPMultiViewDataset
+from triangulang.data.nvos_dataset import NVOSDataset
+from triangulang.data.spinnerf_dataset import SpinNeRFDataset
+from triangulang.data.uco3d_dataset import UCO3DMultiViewDataset
+from triangulang.data.lerf_ovs_dataset import LERFOVSDataset
 logger = triangulang.get_logger(__name__)
 
 
@@ -47,7 +52,6 @@ def get_dataset(
         raise ValueError(f"Unknown dataset: {dataset_name}. Supported: {SUPPORTED_DATASETS}")
 
     if dataset_name == 'scannetpp':
-        from triangulang.utils.scannetpp_loader import ScanNetPPMultiViewDataset
         return ScanNetPPMultiViewDataset(
             data_root=data_root,
             split=split,
@@ -70,7 +74,6 @@ def get_dataset(
         )
 
     elif dataset_name == 'nvos':
-        from triangulang.data.nvos_dataset import NVOSDataset
         return NVOSDataset(
             data_root=data_root,
             split=split,
@@ -84,7 +87,6 @@ def get_dataset(
         )
 
     elif dataset_name == 'spinnerf':
-        from triangulang.data.spinnerf_dataset import SpinNeRFDataset
         return SpinNeRFDataset(
             data_root=data_root,
             split=split,
@@ -99,7 +101,6 @@ def get_dataset(
         )
 
     elif dataset_name == 'uco3d':
-        from triangulang.data.uco3d_dataset import UCO3DMultiViewDataset
         return UCO3DMultiViewDataset(
             data_root=data_root,
             split=split,
@@ -116,7 +117,6 @@ def get_dataset(
         )
 
     elif dataset_name == 'lerf_ovs':
-        from triangulang.data.lerf_ovs_dataset import LERFOVSDataset
         return LERFOVSDataset(
             data_root=data_root,
             split=split,
@@ -206,8 +206,6 @@ def collate_fn_universal(batch):
 
     Handles differences between datasets (e.g., some have intrinsics, some don't).
     """
-    import torch
-
     # Collect all keys across the batch
     all_keys = set()
     for item in batch:

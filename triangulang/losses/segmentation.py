@@ -3,6 +3,7 @@
 import torch
 import torch.nn.functional as F
 import numpy as np
+from scipy.ndimage import distance_transform_edt
 
 
 def focal_loss(pred, target, alpha=0.75, gamma=2.0):
@@ -32,7 +33,6 @@ def boundary_loss(pred, target):
     Penalizes predictions that are far from the true boundary.
     Complementary to dice/focal which focus on region overlap.
     """
-    from scipy.ndimage import distance_transform_edt
     target_np = target.detach().cpu().numpy()
     dist_maps = []
     for i in range(target_np.shape[0]):

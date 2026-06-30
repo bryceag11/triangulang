@@ -1,6 +1,7 @@
 """Dataset-specific evaluation: uCO3D, NVOS, PartImageNet."""
 import json
 import time
+import traceback
 import numpy as np
 import torch
 from pathlib import Path
@@ -13,6 +14,10 @@ import triangulang
 logger = triangulang.get_logger(__name__)
 
 from triangulang.data.dataset_factory import get_dataset, get_dataset_config
+from triangulang.data.uco3d_dataset import UCO3DMultiViewDataset
+from triangulang.data.uco3d_factory import create_uco3d_eval_dataset
+from triangulang.data.nvos_dataset import NVOSDataset, NVOS_PROMPTS
+from triangulang.evaluation.eval_utils import print_cross_fold_analysis
 from triangulang.evaluation.visualization import (
     plot_category_iou, plot_summary,
     generate_paper_visualizations, generate_single_object_viz,
@@ -20,9 +25,6 @@ from triangulang.evaluation.visualization import (
 
 
 def _evaluate_uco3d(model, args, device, ddp, data_root, output_dir, viz_dir, total_params, trainable_params, gasa_params):
-    from triangulang.data.uco3d_dataset import UCO3DMultiViewDataset
-    from triangulang.data.uco3d_factory import create_uco3d_eval_dataset
-
     # Default to per-frame mode for uCO3D (faster, lower memory, no cross-view attention)
     # Use --view-chunk-size N for chunked processing with cross-view attention
     per_frame_default = False
@@ -97,58 +99,9 @@ def _evaluate_uco3d(model, args, device, ddp, data_root, output_dir, viz_dir, to
     if ddp.is_main and args.cross_fold:
         per_cat_iou = results.get('per_category_iou', {})
         per_cat_recall = results.get('per_category_recall', {})
-
         if len(per_cat_iou) >= args.num_folds:
-            print()
-            print("="*70)
-            print(f"CROSS-FOLD ANALYSIS ({args.num_folds} folds)")
-            print("="*70)
-            print("Grouping categories into folds for per-group performance analysis\n")
-
-            # Sort categories alphabetically for deterministic fold assignment
-            sorted_categories = sorted(per_cat_iou.keys())
-            fold_size = len(sorted_categories) // args.num_folds
-
-            fold_results = []
-            for fold_idx in range(args.num_folds):
-                start_idx = fold_idx * fold_size
-                if fold_idx == args.num_folds - 1:
-                    end_idx = len(sorted_categories)
-                else:
-                    end_idx = start_idx + fold_size
-
-                fold_categories = sorted_categories[start_idx:end_idx]
-                fold_ious = [per_cat_iou[cat] for cat in fold_categories]
-                fold_recalls = [per_cat_recall.get(cat, 0) for cat in fold_categories]
-
-                fold_mean_iou = np.mean(fold_ious)
-                fold_mean_recall = np.mean(fold_recalls)
-
-                fold_results.append({
-                    'fold_id': fold_idx,
-                    'categories': fold_categories,
-                    'num_categories': len(fold_categories),
-                    'mean_iou': float(fold_mean_iou),
-                    'mean_recall': float(fold_mean_recall),
-                })
-
-                print(f"Fold {fold_idx + 1}/{args.num_folds}: {len(fold_categories)} categories")
-                print(f"  Mean IoU:    {100*fold_mean_iou:.2f}%")
-                print(f"  Mean Recall: {100*fold_mean_recall:.2f}%")
-                print(f"  Categories:  {', '.join(fold_categories[:5])}" +
-                      (f", ... (+{len(fold_categories)-5} more)" if len(fold_categories) > 5 else ""))
-                print()
-
-            # Find best/worst folds (matching ScanNet++ format)
-            best_fold = max(fold_results, key=lambda x: x['mean_iou'])
-            worst_fold = min(fold_results, key=lambda x: x['mean_iou'])
-
-            print(f"Best fold: Fold {best_fold['fold_id'] + 1} (mIoU={100*best_fold['mean_iou']:.2f}%)")
-            print(f"Worst fold: Fold {worst_fold['fold_id'] + 1} (mIoU={100*worst_fold['mean_iou']:.2f}%)")
-            print(f"Performance gap: {100*(best_fold['mean_iou'] - worst_fold['mean_iou']):.2f}%")
-            print("="*70)
-
-            results['fold_results'] = fold_results
+            results['fold_results'] = print_cross_fold_analysis(
+                per_cat_iou, per_cat_recall, args.num_folds)
 
     # Save results and config
     if ddp.is_main:
@@ -195,8 +148,6 @@ def _evaluate_uco3d(model, args, device, ddp, data_root, output_dir, viz_dir, to
 
 
 def _evaluate_nvos(model, args, device, ddp, data_root, output_dir, viz_dir):
-    from triangulang.data.nvos_dataset import NVOSDataset, NVOS_PROMPTS
-
     logger.info(f"NVOS Evaluation")
     if args.baseline_sam3:
         logger.info(f"  Mode: BASELINE SAM3 (native decoder, no GASA/depth/cross-view)")
@@ -273,13 +224,6 @@ def _evaluate_nvos(model, args, device, ddp, data_root, output_dir, viz_dir):
                     size=target_gt.shape[-2:], mode='bilinear', align_corners=False
                 ).squeeze(0).squeeze(0)
 
-            # CRF / morphological post-processing (SO spatial path)
-            if use_crf:
-                from triangulang.utils.crf_postprocess import morphological_smooth
-                mask_binary = (torch.sigmoid(pred_mask) > 0.5).cpu().numpy().astype(np.float32)
-                refined = morphological_smooth(mask_binary, kernel_size=7)
-                pred_mask = torch.from_numpy(refined * 10.0 - 5.0).to(pred_mask.device)
-
             # Compute IoU
             gt_binary = (target_gt > 0.5).float()
             relevancy = torch.sigmoid(pred_mask)
@@ -322,7 +266,6 @@ def _evaluate_nvos(model, args, device, ddp, data_root, output_dir, viz_dir):
 
         except Exception as e:
             if ddp.is_main:
-                import traceback
                 logger.warning(f"NVOS error on {batch.get('scene_id', '?')}: {e}")
                 traceback.print_exc()
             continue

@@ -1,4 +1,4 @@
-"""Helper functions for TrianguLang training: setup, validation, model building."""
+"""Helper functions for TrianguLang training: data collation, validation, visualization."""
 import warnings
 # Suppress PyTorch scheduler deprecation warning (internal to SequentialLR)
 warnings.filterwarnings('ignore', message='.*epoch parameter in.*scheduler.step.*')
@@ -8,93 +8,29 @@ cv2.setNumThreads(0)
 cv2.ocl.setUseOpenCL(False)
 
 import sys
-import os
-import gc
-from pathlib import Path
-from datetime import datetime
-from contextlib import nullcontext
 import random
-import math
-import time
+from pathlib import Path
 
-import tyro
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from functools import partial
-from torch.utils.data import DataLoader, WeightedRandomSampler
-from collections import Counter
-from torch.amp import autocast, GradScaler
-from tqdm import tqdm
 import numpy as np
-import psutil
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from PIL import Image as PILImage
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / 'sam3'))
 sys.path.insert(0, str(PROJECT_ROOT / 'depth_anything_v3' / 'src'))
 
-# DDP support - auto-detects if running via torchrun (must be after sys.path setup)
-from triangulang.utils.ddp_utils import DDPManager
-
-from triangulang.utils.scannetpp_loader import ScanNetPPMultiViewDataset
-from triangulang.data.dataset_factory import get_dataset, get_dataset_config
-
-# SAM3 imports
-from sam3 import build_sam3_image_model
-from sam3.model.geometry_encoders import Prompt
-from sam3.model.data_misc import FindStage
-from sam3.sam.prompt_encoder import PositionEmbeddingRandom
-from sam3.model.model_misc import MLP as SAM3MLP
-
-# DA3 imports
-from depth_anything_3.api import DepthAnything3
 from depth_anything_3.utils.visualize import visualize_depth
 
-# GASA imports
-from triangulang.models.gasa import (
-    PointmapComputer,
-    WorldSpacePositionalEncoding,
-    CameraRelativePositionalEncoding,
-    PluckerEmbedding,
-    RayRoPE3D,
-)
-
-# Sheaf consistency losses
-from triangulang.losses.sheaf_losses import SheafConsistencyLoss, FeatureSheafLoss, AsymmetricRestrictionSheaf
-
-# Spatial reasoning utilities
-from triangulang.utils.spatial_reasoning import (
-    parse_spatial_qualifier,
-    parse_relational_query,
-    get_spatial_qualifier_idx,
-    spatial_to_pseudo_point_tensor,
-    SpatialAugmentor,
-    GTAwareSpatialAugmentor,
-    SpatialContext,
-    SPATIAL_QUALIFIER_TO_IDX,
-)
-from triangulang.training.config import TrainConfig
-
-from triangulang import BPE_PATH as _BPE_PATH
-
-# Extracted utilities
-from triangulang.utils.lora import LoRALayer, LoRAManager
 from triangulang.utils.metrics import (
-    compute_iou, compute_recall, compute_per_mask_ious,
-    compute_mean_accuracy, compute_gt_centroid, CategoryMetricsTracker,
+    CategoryMetricsTracker, compute_iou, compute_recall, compute_mean_accuracy,
 )
-from triangulang.losses.segmentation import (
-    focal_loss, dice_loss, centroid_loss, boundary_loss,
-    lovasz_grad, lovasz_hinge_loss, lovasz_loss, point_sampled_loss,
-    align_loss, contrastive_mask_loss, segmentation_loss,
-)
-from triangulang.losses.spatial_losses import spatial_ranking_loss, spatial_selection_loss
-from triangulang.utils.matching import hungarian_match, text_greedy_match
-from triangulang.utils.geometry import triangulate_centroid
-from triangulang.training.forward_passes import (
-    _forward_cross_view, _forward_batch_views, _forward_sequential,
-)
+from triangulang.losses.segmentation import focal_loss, dice_loss
 
 
 def set_seed(seed: int, rank: int = 0):
@@ -103,47 +39,6 @@ def set_seed(seed: int, rank: int = 0):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-
-
-from triangulang.models.gasa_decoder import (
-    GASADecoderLayer,
-    MaskRefiner,
-    SpatialAttentionBias,
-    TextConditionedSpatialBias,
-    GASADecoder,
-)
-from triangulang.models.triangulang_model import TrianguLangModel
-
-
-# The following classes have been extracted to separate files:
-# - GASADecoderLayer, MaskRefiner, SpatialAttentionBias,
-#   TextConditionedSpatialBias, GASADecoder -> triangulang.models.gasa_decoder
-# - TrianguLangModel -> triangulang.models.triangulang_model
-
-
-
-def set_seed(seed: int, rank: int = 0):
-    seed = seed + rank
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
-
-from triangulang.models.gasa_decoder import (
-    GASADecoderLayer,
-    MaskRefiner,
-    SpatialAttentionBias,
-    TextConditionedSpatialBias,
-    GASADecoder,
-)
-from triangulang.models.triangulang_model import TrianguLangModel
-
-
-# The following classes have been extracted to separate files:
-# - GASADecoderLayer, MaskRefiner, SpatialAttentionBias,
-#   TextConditionedSpatialBias, GASADecoder -> triangulang.models.gasa_decoder
-# - TrianguLangModel -> triangulang.models.triangulang_model
 
 
 def collate_fn(batch, max_objects=0):
@@ -238,13 +133,6 @@ def collate_fn(batch, max_objects=0):
         result['spatial_context'] = spatial_contexts
 
     return result
-
-
-
-
-
-
-
 
 
 def run_validation(model, val_dataloader, device, ddp, args, scaler=None):
@@ -412,12 +300,6 @@ def run_validation(model, val_dataloader, device, ddp, args, scaler=None):
 
 def visualize_predictions(run_dir, epoch, images, gt_masks, outputs, prompts, max_samples=4):
     """Visualize predictions with SAM3-style mask overlay."""
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    import matplotlib.patches as patches
-    import numpy as np
-
     vis_dir = run_dir / 'visualizations'
     vis_dir.mkdir(exist_ok=True)
 
@@ -439,13 +321,11 @@ def visualize_predictions(run_dir, epoch, images, gt_masks, outputs, prompts, ma
         # Get masks and resize to image resolution
         gt_mask = gt_masks[i].cpu().numpy()
         if gt_mask.shape != (H, W):
-            from PIL import Image as PILImage
             gt_mask = np.array(PILImage.fromarray((gt_mask * 255).astype(np.uint8)).resize((W, H), PILImage.NEAREST)) / 255.0
 
         if pred_masks is not None:
             pred_mask = torch.sigmoid(pred_masks[i, 0]).cpu().numpy()
             if pred_mask.shape != (H, W):
-                from PIL import Image as PILImage
                 pred_mask = np.array(PILImage.fromarray((pred_mask * 255).astype(np.uint8)).resize((W, H), PILImage.BILINEAR)) / 255.0
             pred_binary = (pred_mask > 0.5).astype(float)
         else:

@@ -7,8 +7,7 @@ Provides SheafConsistencyLoss and GeometricContrastiveLoss.
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from typing import Optional, Tuple
+from typing import Optional
 
 
 class LearnedRestrictionMap(nn.Module):
@@ -179,8 +178,7 @@ class SheafConsistencyLoss(nn.Module):
             masks = masks.squeeze(2)  # [B, N, H, W]
         
         B, N, H, W = masks.shape
-        device = masks.device
-        
+
         # Flatten spatial dimensions
         masks_flat = masks.reshape(B, N, -1)  # [B, N, H*W]
         pts_flat = pointmaps.reshape(B, N, -1, 3)  # [B, N, H*W, 3]
@@ -550,7 +548,20 @@ class FeatureSheafLoss(nn.Module):
         return (mapped_i - mapped_j).pow(2).mean()
 
 
-from triangulang.losses.sheaf_losses_ext import (
-    ExplicitSheafLaplacian, GeometricContrastiveLoss,
-    CycleConsistencyLoss, TrianguLangSheafLoss,
-)
+# Backward-compatible re-exports of the extended sheaf losses. They live in
+# sheaf_losses_ext, which imports the base classes defined above. A module-level
+# __getattr__ (PEP 562) defers that import until first access, so importing
+# sheaf_losses_ext on its own does not trigger a circular import at load time.
+_EXT_EXPORTS = {
+    "ExplicitSheafLaplacian",
+    "GeometricContrastiveLoss",
+    "CycleConsistencyLoss",
+    "TrianguLangSheafLoss",
+}
+
+
+def __getattr__(name):
+    if name in _EXT_EXPORTS:
+        from triangulang.losses import sheaf_losses_ext
+        return getattr(sheaf_losses_ext, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

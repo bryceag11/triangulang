@@ -354,3 +354,93 @@ def compute_spatial_gt(
     result['bottom'] = result['bottommost']
 
     return result
+
+
+def print_results_table(title, info_lines=None, metric_rows=None, width=70):
+    """Print an evaluation results banner with an optional Selected/Oracle/Gap table.
+
+    Args:
+        title: banner title.
+        info_lines: summary strings printed under the banner.
+        metric_rows: list of (label, selected, oracle) tuples; omit to skip the table.
+    """
+    print()
+    print("=" * width)
+    print(title)
+    print("=" * width)
+    for line in (info_lines or []):
+        print(line)
+    if metric_rows:
+        print("-" * width)
+        print(f"{'Metric':<25} {'Selected':<15} {'Oracle':<15} {'Gap':<10}")
+        print("-" * width)
+        for label, selected, oracle in metric_rows:
+            print(f"{label:<25} {100*selected:>13.2f}%  {100*oracle:>13.2f}%  "
+                  f"{100*(oracle - selected):>+8.2f}%")
+        print("-" * width)
+
+
+def print_localization_block(acc_5cm, acc_10cm, acc_50cm, mean_error_m, num_samples, width=60):
+    """Print the IoU-based 3D localization metrics block."""
+    print("3D Localization (IoU-based, same pointmap):")
+    print(f"  Acc@5cm:        {100*acc_5cm:.2f}%")
+    print(f"  Acc@10cm:       {100*acc_10cm:.2f}%")
+    print(f"  Acc@50cm:       {100*acc_50cm:.2f}%")
+    if mean_error_m is not None and mean_error_m != float('inf'):
+        print(f"  Mean Error:     {mean_error_m*100:.1f} cm")
+    print(f"  Samples:        {num_samples}")
+    print("-" * width)
+
+
+def print_top_bottom_categories(per_cat_iou, per_cat_recall, k=5, blank_line=False):
+    """Print the top-k and bottom-k categories by IoU (with recall)."""
+    sep = "\n" if blank_line else ""
+    sorted_cats = sorted(per_cat_iou.items(), key=lambda x: x[1], reverse=True)
+    for header, cats in ((f"{sep}Top {k} categories:", sorted_cats[:k]),
+                         (f"{sep}Bottom {k} categories:", sorted_cats[-k:])):
+        print(header)
+        for cat, iou in cats:
+            print(f"  {cat}: IoU={100*iou:.1f}%, Recall={100*per_cat_recall.get(cat, 0):.1f}%")
+
+
+def print_cross_fold_analysis(per_cat_iou, per_cat_recall, num_folds, width=70):
+    """Print stratified cross-fold category analysis. Returns the list of fold dicts."""
+    print()
+    print("=" * width)
+    print(f"CROSS-FOLD ANALYSIS ({num_folds} folds)")
+    print("=" * width)
+    print("Grouping categories into folds for per-group performance analysis\n")
+
+    sorted_categories = sorted(per_cat_iou.keys())
+    fold_size = len(sorted_categories) // num_folds
+
+    fold_results = []
+    for fold_idx in range(num_folds):
+        start_idx = fold_idx * fold_size
+        end_idx = len(sorted_categories) if fold_idx == num_folds - 1 else start_idx + fold_size
+        fold_categories = sorted_categories[start_idx:end_idx]
+        fold_mean_iou = np.mean([per_cat_iou[cat] for cat in fold_categories])
+        fold_mean_recall = np.mean([per_cat_recall.get(cat, 0) for cat in fold_categories])
+
+        fold_results.append({
+            'fold_id': fold_idx,
+            'categories': fold_categories,
+            'num_categories': len(fold_categories),
+            'mean_iou': float(fold_mean_iou),
+            'mean_recall': float(fold_mean_recall),
+        })
+
+        print(f"Fold {fold_idx + 1}/{num_folds}: {len(fold_categories)} categories")
+        print(f"  Mean IoU:    {100*fold_mean_iou:.2f}%")
+        print(f"  Mean Recall: {100*fold_mean_recall:.2f}%")
+        print(f"  Categories:  {', '.join(fold_categories[:5])}" +
+              (f", ... (+{len(fold_categories)-5} more)" if len(fold_categories) > 5 else ""))
+        print()
+
+    best_fold = max(fold_results, key=lambda x: x['mean_iou'])
+    worst_fold = min(fold_results, key=lambda x: x['mean_iou'])
+    print(f"Best fold: Fold {best_fold['fold_id'] + 1} (mIoU={100*best_fold['mean_iou']:.2f}%)")
+    print(f"Worst fold: Fold {worst_fold['fold_id'] + 1} (mIoU={100*worst_fold['mean_iou']:.2f}%)")
+    print(f"Performance gap: {100*(best_fold['mean_iou'] - worst_fold['mean_iou']):.2f}%")
+    print("=" * width)
+    return fold_results

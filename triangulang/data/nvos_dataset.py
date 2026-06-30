@@ -4,10 +4,9 @@
 20-62 images per scene at 4032x3024 resolution.
 """
 
-import json
+import argparse
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
-import random
+from typing import Dict, List, Tuple
 
 import torch
 from torch.utils.data import Dataset
@@ -342,7 +341,6 @@ Alternative: Use wget or gdown for direct download.
 
 
 if __name__ == '__main__':
-    import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--data-root', type=str, default='data/nvos')
     parser.add_argument('--download', action='store_true', help='Show download instructions')

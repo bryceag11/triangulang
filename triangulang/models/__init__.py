@@ -14,8 +14,6 @@ GASA Components:
 
 Fusion Heads (in simple_fusion.py):
 - SimpleFusionHead, CrossAttentionFusionHead, GatedFusionHead
-
-Experimental variants are in _experimental.py (not part of public API).
 """
 
 from .simple_fusion import (

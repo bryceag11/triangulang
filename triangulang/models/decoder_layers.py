@@ -7,19 +7,9 @@ Classes extracted from gasa_decoder.py:
 - TextConditionedSpatialBias: ViL3DRel-inspired text-conditioned spatial bias
 """
 
-import math
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-from triangulang.models.positional_encodings import (
-    WorldSpacePositionalEncoding,
-    CameraRelativePositionalEncoding,
-    PluckerEmbedding,
-    RayRoPE3D,
-)
-from triangulang.models.gasa import PointmapComputer  # noqa: F401
 
 
 class GASADecoderLayer(nn.Module):

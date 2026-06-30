@@ -1,5 +1,6 @@
 """Paper-quality visualization functions for TrianguLang results."""
 import json
+import random
 from collections import defaultdict
 
 import numpy as np
@@ -153,7 +154,6 @@ def collect_paper_viz_from_results(
     Returns:
         List of grid sets. Each set is a list of row dicts.
     """
-    import random
     rng = random.Random(seed)
 
     if not viz_pool:

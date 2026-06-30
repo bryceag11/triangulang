@@ -12,7 +12,6 @@ import json
 import pickle
 import hashlib
 import fcntl
-import os
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from collections import Counter, OrderedDict, defaultdict
@@ -25,8 +24,12 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 import numpy as np
 from PIL import Image
+from tqdm import tqdm
 
 import triangulang
+from triangulang.utils import scannetpp_io
+from triangulang.utils.scannetpp_base import LABEL_FIXES, normalize_label, get_scenes_dir
+from triangulang.utils.scannetpp_sampling import sample_views
 logger = triangulang.get_logger(__name__)
 
 def _is_main_process():
@@ -66,12 +69,6 @@ SCANNETPP_SKIP_LABELS = frozenset({
     'reflection', 'mirror', 'structure',
 })
 
-# Label normalization: Fix typos and inconsistencies in ScanNet++ annotations
-# Loaded from scannetpp_label_fixes.json (comments stripped; see git history for rationale)
-LABEL_FIXES: Dict[str, str] = json.load(
-    open(Path(__file__).parent / 'scannetpp_label_fixes.json')
-)
-
 # Bad annotations to exclude: (scene_id, object_id) pairs with incorrect masks
 # Detected via segment count outlier analysis (objects with >100x median segment count)
 BAD_ANNOTATIONS = {
@@ -96,35 +93,10 @@ def is_bad_annotation(scene_id: str, obj_id: int) -> bool:
     """Check if an annotation should be excluded due to known errors."""
     return (scene_id, obj_id) in BAD_ANNOTATIONS
 
-def normalize_label(label: str) -> str:
-    """Fix typos and normalize labels from ScanNet++ annotations."""
-    label = label.strip()
-    # Collapse double (or more) spaces to single space
-    while '  ' in label:
-        label = label.replace('  ', ' ')
-    # Strip trailing brackets/artifacts
-    label = label.rstrip(']').rstrip('[').strip()
-    return LABEL_FIXES.get(label, label)
-
 # Add scannetpp_toolkit to path for utilities
 _toolkit_path = Path(__file__).parent.parent.parent / "scannetpp_toolkit"
 if _toolkit_path.exists() and str(_toolkit_path) not in sys.path:
     sys.path.insert(0, str(_toolkit_path))
-
-def get_scenes_dir(data_root: Path) -> Path:
-    """Get the directory containing scene folders (handles nested 'data' folder)."""
-    # ScanNet++ download creates: data_root/data/<scene_id>/
-    nested = data_root / "data"
-    if nested.exists() and nested.is_dir():
-        return nested
-    return data_root
-
-# Deferred imports from sub-modules (avoids circular imports at module load)
-
-def _get_io():
-    """Lazy import of scannetpp_io to avoid circular imports."""
-    from triangulang.utils import scannetpp_io
-    return scannetpp_io
 
 # Multi-View Dataset with Supervised Training Support
 
@@ -195,13 +167,13 @@ class ScanNetPPMultiViewDataset(Dataset):
         if use_cached_depth and self.da3_cache_dir and not self.da3_cache_dir.exists():
             if _is_main_process():
                 logger.warning(f"DA3 cache directory not found: {self.da3_cache_dir}")
-                logger.warning(f"  Run scripts/preprocess_da3.py or preprocess_da3_nested.py first.")
+                logger.warning("  Run scripts/preprocess_da3.py or preprocess_da3_nested.py first.")
         self.use_cached_pi3x = use_cached_pi3x
         self.pi3x_cache_dir = self.data_root / pi3x_cache_name if use_cached_pi3x else None
         if use_cached_pi3x and self.pi3x_cache_dir and not self.pi3x_cache_dir.exists():
             if _is_main_process():
                 logger.warning(f"PI3X cache directory not found: {self.pi3x_cache_dir}")
-                logger.warning(f"  Run MapAnything caching script first.")
+                logger.warning("  Run MapAnything caching script first.")
 
         self.centroid_cache = {}
         centroid_cache_path = self.data_root / "centroid_cache.json"
@@ -218,7 +190,7 @@ class ScanNetPPMultiViewDataset(Dataset):
         else:
             self.obj_ids_root = self.data_root / "semantics_2d_val"
 
-        io = _get_io()
+        io = scannetpp_io
         scenes = io.get_available_scenes(self.data_root, split)
         if max_scenes:
             scenes = scenes[:max_scenes]
@@ -226,7 +198,6 @@ class ScanNetPPMultiViewDataset(Dataset):
         self.rasterizers = OrderedDict()  # Legacy - kept for compatibility
         if _is_main_process():
             logger.info(f"Loading ScanNet++ multi-view dataset ({split}, supervised={supervised})...")
-        from tqdm import tqdm
         skipped = 0
 
         for scene_id in tqdm(scenes, desc="Loading scenes", disable=not _is_main_process()):
@@ -344,7 +315,6 @@ class ScanNetPPMultiViewDataset(Dataset):
 
     def _get_rasterizer(self, scene_id: str, scene_path: Path):
         """Get or create rasterizer for a scene (LRU cached to limit memory)."""
-        from triangulang.utils.scannetpp_rasterization import SceneRasterizer
         MAX_CACHED_RASTERIZERS = 10  # Limit to ~500MB RAM for meshes
 
         if scene_id in self.rasterizers:
@@ -373,10 +343,6 @@ class ScanNetPPMultiViewDataset(Dataset):
         visible surface. Using mesh vertex median matches what triangulation
         computes from predicted masks.
         """
-        from triangulang.utils.scannetpp_rasterization import (
-            load_vertex_object_ids, get_object_centroid_3d
-        )
-
         # Check cache first
         if scene_id in self._mesh_cache:
             self._mesh_cache.move_to_end(scene_id)
@@ -467,7 +433,6 @@ class ScanNetPPMultiViewDataset(Dataset):
     def _sample_views(self, images: List[str], n_views: int, transforms: dict = None,
                        scene_id: str = None) -> List[str]:
         """Delegate to scannetpp_sampling.sample_views."""
-        from triangulang.utils.scannetpp_sampling import sample_views
         if not hasattr(self, '_chunk_warning_ref'):
             self._chunk_warning_ref = [False]
         return sample_views(
@@ -646,7 +611,6 @@ class ScanNetPPMultiViewDataset(Dataset):
                               sampling_strategy, min_object_pixels, split, max_scenes,
                               use_cached_depth, da3_cache_name):
         """Enumerate all (scene_idx, obj_id, label) triples with file-lock-safe caching."""
-        from tqdm import tqdm
         if not (enumerate_all_objects and supervised and not self.scene_grouped):
             if _is_main_process():
                 logger.info(f"  {self.samples_per_scene} samples/scene = "
@@ -845,7 +809,6 @@ class ScanNetPPMultiViewDataset(Dataset):
             intr = torch.stack(cached_int)
             if scale_h != 1.0 or scale_w != 1.0:
                 orig_fy = intr[0, 1, 1].item()
-                orig_cy = intr[0, 1, 2].item()
                 intr = intr.clone()
                 intr[:, 0, 0] *= scale_w
                 intr[:, 1, 1] *= scale_h
@@ -881,7 +844,7 @@ class ScanNetPPMultiViewDataset(Dataset):
                     self._spatial_context_warning_printed = True
 
     def __getitem__(self, idx):
-        io = _get_io()
+        io = scannetpp_io
         forced_obj_id = forced_label = forced_visible_images = None
 
         if self.scene_grouped:

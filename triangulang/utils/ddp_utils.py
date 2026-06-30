@@ -15,7 +15,6 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from torch.utils.data.distributed import DistributedSampler
-import numpy as np
 
 import triangulang
 logger = triangulang.get_logger(__name__)

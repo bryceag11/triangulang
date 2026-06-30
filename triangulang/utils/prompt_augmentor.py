@@ -13,6 +13,7 @@ Also includes sprinkle removal for cleaner predictions.
 import torch
 import torch.nn.functional as F
 import numpy as np
+import cv2
 from typing import Optional, Tuple, List, Dict, Union
 import random
 
@@ -620,20 +621,12 @@ class PromptAugmentor:
             m = cleaned[b, 0]
             binary = (m > 0.5).cpu().numpy().astype(np.uint8)
 
-            # Find connected components
-            try:
-                import cv2
-                num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
-
-                # Remove small components
-                for i in range(1, num_labels):  # Skip background (label 0)
-                    area = stats[i, cv2.CC_STAT_AREA]
-                    if area < min_area:
-                        m[torch.from_numpy(labels == i).to(m.device)] = 0
-            except ImportError:
-                # Fallback without cv2: just threshold by total area
-                if m.sum() < min_area:
-                    m.zero_()
+            # Find connected components and remove small ones
+            num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+            for i in range(1, num_labels):  # Skip background (label 0)
+                area = stats[i, cv2.CC_STAT_AREA]
+                if area < min_area:
+                    m[torch.from_numpy(labels == i).to(m.device)] = 0
 
             cleaned[b, 0] = m
 

@@ -1,12 +1,10 @@
 """Extracted helpers from TrianguLangModel: profiling, prompt utilities, mask selection, depth/pose, and multi-view forward."""
 import math
 import time
-import random
 
 import torch
 import torch.nn.functional as F
 from torch.amp import autocast
-import numpy as np
 
 from sam3.model.geometry_encoders import Prompt
 from sam3.model.data_misc import FindStage
@@ -229,10 +227,6 @@ def sample_points_from_mask_batched(masks, num_positive: int = 10, num_negative:
     B, H, W = masks.shape
     device = masks.device
     num_points = num_positive + num_negative
-
-    # Create coordinate grids normalized to [0, 1]
-    y_coords = torch.arange(H, device=device).float().view(1, H, 1).expand(B, H, W) / H
-    x_coords = torch.arange(W, device=device).float().view(1, 1, W).expand(B, H, W) / W
 
     all_points = []
     all_labels = []

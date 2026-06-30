@@ -1,4 +1,11 @@
-"""Forward pass helpers for TrianguLang training loop."""
+"""Sequential forward pass for TrianguLang training (one view at a time).
+
+Also hosts the sheaf-consistency loss helper. ``_forward_sequential`` and
+``_compute_sheaf_loss`` are re-exported from ``forward_passes`` for stable
+import paths.
+"""
+import traceback
+
 import triangulang
 import torch
 
@@ -16,7 +23,9 @@ from triangulang.utils.metrics import (
     compute_per_mask_ious, compute_gt_centroid,
 )
 from triangulang.utils.matching import hungarian_match, text_greedy_match
-from triangulang.utils.geometry import triangulate_centroid
+from triangulang.training.forward_passes_common import (
+    connect_trainable_params_to_graph, smooth_mask_logits, get_norm_scale,
+)
 
 
 def _compute_sheaf_loss(sheaf_loss_fn, feature_sheaf_loss_fn, sheaf_preds, sheaf_pointmaps,
@@ -45,7 +54,6 @@ def _compute_sheaf_loss(sheaf_loss_fn, feature_sheaf_loss_fn, sheaf_preds, sheaf
             if ddp.is_main:
                 print(f"  [SHEAF WARNING] Loss computation failed ({sheaf_loss_fn._failure_count} total failures): {e}")
                 if sheaf_loss_fn._failure_count <= 3:
-                    import traceback
                     traceback.print_exc()
                 if sheaf_loss_fn._failure_count == 10:
                     print(f"  [SHEAF ERROR] 10 consecutive failures. Sheaf loss may not be working. "
@@ -108,7 +116,6 @@ def _compute_sheaf_loss(sheaf_loss_fn, feature_sheaf_loss_fn, sheaf_preds, sheaf
             if ddp.is_main:
                 print(f"  [FEATURE-SHEAF WARNING] Loss failed ({feature_sheaf_loss_fn._failure_count}): {e}")
                 if feature_sheaf_loss_fn._failure_count <= 3:
-                    import traceback
                     traceback.print_exc()
 
     return accumulated_loss, batch_loss_contribution, batch_sheaf_loss_tensor
@@ -245,15 +252,8 @@ def _forward_sequential(model, base_model, images, gt_masks, prompts, batch, arg
                         if pred.shape[-2:] != per_obj_gt.shape[-2:]:
                             pred = F.interpolate(pred.unsqueeze(1), size=per_obj_gt.shape[-2:], mode='bilinear', align_corners=False).squeeze(1)
 
-                        # Mask smoothing (29x29 avg pool, matches eval-time LangSplat protocol)
-                        pred_for_loss = pred
-                        if args.mask_smooth_kernel > 0:
-                            sk = args.mask_smooth_kernel
-                            sp = sk // 2
-                            pred_for_loss = F.avg_pool2d(
-                                pred.unsqueeze(1), kernel_size=sk, stride=1, padding=sp,
-                                count_include_pad=False
-                            ).squeeze(1)
+                        # Mask smoothing (avg pool, matches eval-time LangSplat protocol)
+                        pred_for_loss = smooth_mask_logits(pred, args.mask_smooth_kernel)
 
                         loss = torch.tensor(0.0, device=device, requires_grad=True)
                         n_obj_valid = 0
@@ -357,11 +357,8 @@ def _forward_sequential(model, base_model, images, gt_masks, prompts, batch, arg
                                     )
                                     loss = loss + args.spatial_ranking_weight * ss_loss / B
 
-                        # Connect unused params for DDP
-                        base_module = model.module if hasattr(model, 'module') else model
-                        for p in base_module.gasa_decoder.parameters():
-                            if p.requires_grad:
-                                loss = loss + p.sum() * 0.0
+                        # Connect unused params for DDP gradient sync.
+                        loss = connect_trainable_params_to_graph(loss, model, include_query_proj=False)
 
                     # Multi-object: Hungarian matching per batch item (non-SAM3-MO path)
                     elif seq_multi_object and seq_multi_K > 1 and 'all_masks' in outputs:
@@ -514,9 +511,8 @@ def _forward_sequential(model, base_model, images, gt_masks, prompts, batch, arg
                                 mode='bilinear', align_corners=False
                             ).squeeze(1)  # [B, H_pm, W_pm]
 
-                            # Get normalization scale to convert back to meters
-                            norm_params = outputs.get('norm_params', None)
-                            scale = norm_params['scale'].item() if norm_params and 'scale' in norm_params else 1.0
+                            # Normalization scale to convert back to meters.
+                            scale = get_norm_scale(outputs)
 
                             for b_idx in range(pred_mask_resized.shape[0]):
                                 # Compute centroid from predicted mask
@@ -547,9 +543,8 @@ def _forward_sequential(model, base_model, images, gt_masks, prompts, batch, arg
                                 mode='bilinear', align_corners=False
                             ).squeeze(1)
 
-                            # Get normalization scale to convert back to meters
-                            norm_params = outputs.get('norm_params', None)
-                            scale = norm_params['scale'].item() if norm_params and 'scale' in norm_params else 1.0
+                            # Normalization scale to convert back to meters.
+                            scale = get_norm_scale(outputs)
 
                             for b_idx in range(pred_mask_resized.shape[0]):
                                 # Compute centroids from masks + depth
@@ -673,7 +668,6 @@ def _forward_sequential(model, base_model, images, gt_masks, prompts, batch, arg
                                          'prompts': prompts}
             except Exception as e:
                 logger.warning(f"Error: {e}")
-                import traceback
                 traceback.print_exc()
 
     sheaf_acc_loss, sheaf_batch_contrib, batch_sheaf_loss_tensor = _compute_sheaf_loss(

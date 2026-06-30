@@ -8,31 +8,20 @@ Architecture:
     4. SAM3 seghead -> masks
 """
 
-import math
-import time
 import random
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.amp import autocast
-import numpy as np
 
-from sam3 import build_sam3_image_model
 from sam3.model.geometry_encoders import Prompt
 from sam3.model.data_misc import FindStage
+from sam3.model.box_ops import box_cxcywh_to_xyxy
+from sam3.train.matcher import BinaryHungarianMatcherV2
+from sam3.train.loss.loss_fns import IABCEMdetr, Masks, CORE_LOSS_KEY
 
-from depth_anything_3.api import DepthAnything3
-
-from triangulang.models.gasa import (
-    PointmapComputer,
-    WorldSpacePositionalEncoding,
-    CameraRelativePositionalEncoding,
-    PluckerEmbedding,
-    RayRoPE3D,
-)
+from triangulang.models.gasa import PointmapComputer
 from triangulang.models.gasa_decoder import GASADecoder, MaskRefiner
-from triangulang import BPE_PATH as _BPE_PATH
 
 from triangulang.utils.spatial_reasoning import (
     spatial_to_pseudo_point_tensor,
@@ -228,12 +217,8 @@ class TrianguLangModel(nn.Module):
         # SAM3 official loss components (--use-sam3-loss): BinaryHungarianMatcherV2 +
         # IABCEMdetr + Masks, matching how gasa_generalist was optimized. Mirrors research
         # train_2d_improved.py:2737-2759 (the unused Boxes loss is omitted: ScanNet++ has no
-        # GT boxes and _compute_sam3_loss never invokes it). sam3.train.* is a training-only,
-        # heavy optional dependency, so it is imported lazily here (only when the flag is on)
-        # to keep inference/eval lean.
+        # GT boxes and _compute_sam3_loss never invokes it).
         if use_sam3_loss:
-            from sam3.train.matcher import BinaryHungarianMatcherV2
-            from sam3.train.loss.loss_fns import IABCEMdetr, Masks
             self.sam3_matcher = BinaryHungarianMatcherV2(
                 cost_class=2.0, cost_bbox=5.0, cost_giou=2.0,
                 focal=True, alpha=0.25, gamma=2.0,
@@ -266,9 +251,6 @@ class TrianguLangModel(nn.Module):
         Returns:
             (total_loss, loss_dict): scalar total loss and dict of named components.
         """
-        from sam3.model.box_ops import box_cxcywh_to_xyxy
-        from sam3.train.loss.loss_fns import CORE_LOSS_KEY
-
         device = gt_masks.device
         B = gt_masks.shape[0]
 
@@ -567,55 +549,34 @@ class TrianguLangModel(nn.Module):
             # With --sheaf-use-gt-poses: GT poses first (needed for stratified sampling across chunks)
             # IMPORTANT: normalize=False for sheaf loss! Each view must stay in shared world frame.
             world_pointmaps = None
-            if not hasattr(self, '_world_pm_debug_logged'):
-                import torch.distributed as _dist
-                # Only log on rank 0 to avoid DDP spam
-                self._world_pm_debug_logged = _dist.is_initialized() and _dist.get_rank() != 0
             if self.sheaf_use_gt_poses and gt_extrinsics is not None:
                 # --sheaf-use-gt-poses: Force GT poses for sheaf world pointmaps.
                 # Works with any depth source (cached DA3-NESTED or DA3METRIC).
                 # GT poses from COLMAP are consistent across ALL views (no chunk issues).
-                if not self._world_pm_debug_logged:
-                    print(f"[World PM] Using GT poses (--sheaf-use-gt-poses) -> world-frame pointmaps")
-                    self._world_pm_debug_logged = True
                 gt_pose = gt_extrinsics.to(device=device, dtype=depth.dtype)
                 world_pointmaps, _ = self.pointmap_computer(depth, gt_pose, intrinsics_scaled, normalize=False)
                 world_pointmaps = world_pointmaps.squeeze(1)
             elif da3_extrinsics is not None and cached_depth is not None:
                 # Cached DA3-NESTED depth + cached DA3-NESTED poses - consistent coordinate system
-                if not self._world_pm_debug_logged:
-                    print(f"[World PM] Using cached DA3 poses (matches cached DA3 depth)")
-                    self._world_pm_debug_logged = True
                 da3_pose_cached = da3_extrinsics.to(device=device, dtype=depth.dtype)
                 world_pointmaps, _ = self.pointmap_computer(depth, da3_pose_cached, intrinsics_scaled, normalize=False)
                 world_pointmaps = world_pointmaps.squeeze(1)
             elif self.da3_has_pose_estimation and da3_pose is not None:
-                if not self._world_pm_debug_logged:
-                    print(f"[World PM] Using DA3 live poses")
-                    self._world_pm_debug_logged = True
                 world_pointmaps, _ = self.pointmap_computer(depth, da3_pose, intrinsics_scaled, normalize=False)
                 world_pointmaps = world_pointmaps.squeeze(1)
             elif da3_extrinsics is not None:
-                if not self._world_pm_debug_logged:
-                    print(f"[World PM] WARNING: Using cached DA3-NESTED extrinsics - may have chunk alignment issues!")
-                    self._world_pm_debug_logged = True
+                # Cached DA3-NESTED extrinsics without matching cached depth: usable but
+                # may have cross-chunk alignment issues.
                 da3_pose_cached = da3_extrinsics.to(device=device, dtype=depth.dtype)
                 world_pointmaps, _ = self.pointmap_computer(depth, da3_pose_cached, intrinsics_scaled, normalize=False)
                 world_pointmaps = world_pointmaps.squeeze(1)
             elif gt_extrinsics is not None and self.da3_model_name in ('DA3METRIC-LARGE', 'depth-anything/DA3METRIC-LARGE'):
                 # DA3METRIC gives metric depth in camera frame. GT poses give camera-to-world.
                 # Together they produce valid world-frame pointmaps.
-                if not self._world_pm_debug_logged:
-                    print(f"[World PM] Using GT poses + DA3METRIC metric depth -> world-frame pointmaps")
-                    self._world_pm_debug_logged = True
                 gt_pose = gt_extrinsics.to(device=device, dtype=depth.dtype)
                 world_pointmaps, _ = self.pointmap_computer(depth, gt_pose, intrinsics_scaled, normalize=False)
                 world_pointmaps = world_pointmaps.squeeze(1)
-            else:
-                if not self._world_pm_debug_logged:
-                    print(f"[World PM] NO POSES AVAILABLE - world_pointmaps will be None!")
-                    self._world_pm_debug_logged = True
-    
+
             # Downsample pointmaps for decoder (configurable via attn_map_size)
             pts = pointmaps.permute(0, 3, 1, 2)
             pts = F.adaptive_avg_pool2d(pts, (self.attn_map_size, self.attn_map_size))

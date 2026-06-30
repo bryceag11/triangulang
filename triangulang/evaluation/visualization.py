@@ -7,6 +7,7 @@ import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from scipy import ndimage
 from pathlib import Path
 from typing import Dict, List, Optional
 from PIL import Image
@@ -44,7 +45,6 @@ def overlay_mask_sam3_style(image: np.ndarray, mask: np.ndarray, color: List[int
                                      overlay[:, :, c])
 
     # Add contour
-    from scipy import ndimage
     contour = ndimage.binary_dilation(mask_bool) ^ mask_bool
     for c in range(3):
         overlay[:, :, c] = np.where(contour, color[c], overlay[:, :, c])

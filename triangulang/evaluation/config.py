@@ -105,9 +105,6 @@ class InferenceConfig:
     temporal_smooth_alpha: float = 0.0
     # EMA smoothing on mask logits across frames (0=disabled, 0.6-0.8=typical)
 
-    use_crf: bool = False
-    # CRF post-processing for sharper mask boundaries
-
     use_cached_pi3x: bool = False
     # Use pre-computed world-frame pointmaps from MapAnything/PI3X (bypasses DA3 for pointmaps)
 

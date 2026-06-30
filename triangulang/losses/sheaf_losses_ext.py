@@ -228,8 +228,7 @@ class GeometricContrastiveLoss(nn.Module):
             features = features.permute(0, 1, 3, 4, 2)  # -> [B, N, H, W, D]
         
         B, N, H, W, D = features.shape
-        device = features.device
-        
+
         # Flatten spatial dimensions
         feats_flat = features.reshape(B, N, H*W, D)  # [B, N, HW, D]
         pts_flat = pointmaps.reshape(B, N, H*W, 3)   # [B, N, HW, 3]
@@ -513,30 +512,3 @@ class TrianguLangSheafLoss(nn.Module):
             total_loss = total_loss + self.lambda_cycle * l_cycle
         
         return total_loss, loss_dict
-
-
-# Example usage in training loop
-
-if __name__ == "__main__":
-    # Example dimensions
-    B, N, H, W, D = 2, 4, 64, 64, 256
-    
-    # Simulated data
-    pred_masks = torch.randn(B, N, H, W)
-    pointmaps = torch.randn(B, N, H, W, 3)
-    features = torch.randn(B, N, H, W, D)
-    
-    # Initialize loss
-    sheaf_losses = TrianguLangSheafLoss(
-        lambda_sheaf=0.1,
-        lambda_contrast=0.05,
-        lambda_cycle=0.0,  # Disabled by default
-        threshold=0.05,
-    )
-    
-    # Compute
-    total_loss, loss_dict = sheaf_losses(pred_masks, pointmaps, features)
-    
-    print(f"Total sheaf loss: {total_loss.item():.4f}")
-    for k, v in loss_dict.items():
-        print(f"  {k}: {v:.4f}")

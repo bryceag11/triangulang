@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 from torch.amp import autocast
 from torch.utils.data import Dataset, DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
@@ -27,6 +28,7 @@ from triangulang.evaluation.eval_utils import (
     create_prompts_from_gt, compute_metrics, compute_oracle_iou,
     compute_3d_centroid, compute_centroid_error, umeyama_alignment,
     compute_cross_view_consistency, compute_spatial_gt,
+    print_results_table, print_localization_block, print_top_bottom_categories,
 )
 from triangulang.evaluation.data_loading import (
     load_scene_data, load_gt_masks, load_gt_poses, get_frame_extrinsics,
@@ -71,14 +73,11 @@ def evaluate_with_dataset(
     Returns:
         Dictionary with evaluation metrics
     """
-    from torch.utils.data import DataLoader
-
     model.eval()
 
     # Create dataloader
     # For distributed: each rank gets a subset
     if ddp.is_distributed:
-        from torch.utils.data.distributed import DistributedSampler
         sampler = DistributedSampler(dataset, num_replicas=ddp.world_size, rank=ddp.rank, shuffle=False)
         dataloader = DataLoader(dataset, batch_size=1, sampler=sampler, num_workers=2)
     else:
@@ -621,43 +620,27 @@ def evaluate_with_dataset(
         results['num_centroid_samples'] = len(centroid_errors)
 
     if ddp.is_main:
-        print()
-        print("="*70)
-        print("EVALUATION RESULTS (uCO3D)")
-        print("="*70)
-        print(f"Samples evaluated: {results['num_samples']}")
-        print(f"Categories: {results['num_categories']}")
-        print("-"*70)
-        print(f"{'Metric':<25} {'Selected':<15} {'Oracle':<15} {'Gap':<10}")
-        print("-"*70)
-        print(f"{'Sample-avg IoU:':<25} {100*mean_iou:>13.2f}%  {100*mean_oracle_iou:>13.2f}%  {100*(mean_oracle_iou-mean_iou):>+8.2f}%")
-        print(f"{'Global mIoU:':<25} {100*global_miou:>13.2f}%  {100*global_oracle_miou:>13.2f}%  {100*(global_oracle_miou-global_miou):>+8.2f}%")
-        print("-"*70)
+        print_results_table(
+            "EVALUATION RESULTS (uCO3D)",
+            info_lines=[
+                f"Samples evaluated: {results['num_samples']}",
+                f"Categories: {results['num_categories']}",
+            ],
+            metric_rows=[
+                ("Sample-avg IoU:", mean_iou, mean_oracle_iou),
+                ("Global mIoU:", global_miou, global_oracle_miou),
+            ],
+        )
         print(f"Mean Class Recall:{100*global_mrecall:.2f}%  (sample-avg: {100*mean_recall:.2f}%)")
         print(f"Precision:        {100*mean_precision:.2f}%")
         print(f"F1 Score:         {100*mean_f1:.2f}%")
         print("-"*70)
 
         if acc_5cm is not None:
-            print(f"3D Localization (IoU-based, same pointmap):")
-            print(f"  Acc@5cm:        {100*acc_5cm:.2f}%")
-            print(f"  Acc@10cm:       {100*acc_10cm:.2f}%")
-            print(f"  Acc@50cm:       {100*acc_50cm:.2f}%")
-            if mean_centroid_error is not None:
-                print(f"  Mean Error:     {mean_centroid_error*100:.1f} cm")
-            print(f"  Samples:        {len(centroid_errors)}")
-            print("-"*60)
+            print_localization_block(acc_5cm, acc_10cm, acc_50cm,
+                                     mean_centroid_error, len(centroid_errors))
 
-        # Top/bottom categories
-        sorted_cats = sorted(category_miou.items(), key=lambda x: x[1], reverse=True)
-        print(f"Top 5 categories:")
-        for cat, iou in sorted_cats[:5]:
-            recall = category_mrecall.get(cat, 0)
-            print(f"  {cat}: IoU={100*iou:.1f}%, Recall={100*recall:.1f}%")
-        print(f"Bottom 5 categories:")
-        for cat, iou in sorted_cats[-5:]:
-            recall = category_mrecall.get(cat, 0)
-            print(f"  {cat}: IoU={100*iou:.1f}%, Recall={100*recall:.1f}%")
+        print_top_bottom_categories(category_miou, category_mrecall)
 
     # Tests whether spatial prefixes ("nearest X", "leftmost X") degrade performance.
     # For single-instance datasets like uCO3D, spatial queries should be no-ops.

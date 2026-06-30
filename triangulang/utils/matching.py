@@ -1,4 +1,5 @@
 import torch
+from scipy.optimize import linear_sum_assignment
 
 
 def hungarian_match(pred_masks, gt_masks, num_objects, text_scores=None):
@@ -14,8 +15,6 @@ def hungarian_match(pred_masks, gt_masks, num_objects, text_scores=None):
         matched_pairs: List[(query_idx, gt_idx)], K pairs
         unmatched_queries: List[int], Q-K unmatched query indices
     """
-    from scipy.optimize import linear_sum_assignment
-
     Q = pred_masks.shape[0]
     K = num_objects
     device = pred_masks.device

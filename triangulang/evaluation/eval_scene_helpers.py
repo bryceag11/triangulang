@@ -14,6 +14,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 from torch.amp import autocast
+import matplotlib.pyplot as plt
 
 from triangulang.utils.spatial_reasoning import (
     parse_spatial_qualifier,
@@ -27,6 +28,7 @@ from triangulang.evaluation.eval_utils import (
     compute_cross_view_consistency,
 )
 from triangulang.evaluation.data_loading import load_gt_masks
+from triangulang.evaluation.visualization import create_comparison_grid
 from triangulang.models.sheaf_embeddings import compute_3d_localization, format_localization_text
 from triangulang.utils.metrics import compute_gt_centroid
 
@@ -690,13 +692,8 @@ def _load_cached_depth(da3_cache_dir, scene_path, img_path, device):
 
 
 def _save_scene_viz(viz_data, viz_dir, scene_path):
-    """Save a comparison grid PNG for a scene.
-
-    Imports matplotlib locally to avoid a hard dependency at module import time.
-    """
+    """Save a comparison grid PNG for a scene."""
     try:
-        import matplotlib.pyplot as plt
-        from triangulang.evaluation.visualization import create_comparison_grid
         viz_dir.mkdir(parents=True, exist_ok=True)
         fig = create_comparison_grid(
             [v["image"] for v in viz_data],

@@ -1,11 +1,12 @@
 """ScanNet++ scene-based evaluation."""
 import json
 import time
+import pickle
 import numpy as np
 import torch
 from pathlib import Path
 from typing import Dict, List, Optional
-from collections import defaultdict
+from collections import defaultdict, Counter
 from tqdm import tqdm
 from datetime import datetime
 import matplotlib.pyplot as plt
@@ -13,7 +14,10 @@ import triangulang
 
 logger = triangulang.get_logger(__name__)
 
-from triangulang.evaluation.eval_utils import compute_spatial_gt
+from triangulang.evaluation.eval_utils import (
+    compute_spatial_gt, print_results_table, print_localization_block,
+    print_top_bottom_categories, print_cross_fold_analysis,
+)
 from triangulang.evaluation.data_loading import (
     load_gt_centroids, load_gt_poses_for_scene,
 )
@@ -152,7 +156,6 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
 
     if args.min_category_samples > 1:
         logger.debug(f"Collecting category statistics for filtering (min {args.min_category_samples} samples)...")
-        from collections import Counter
         category_counts = Counter()
         for scene_id in scene_ids:
             anno_path = data_root / 'data' / scene_id / 'scans' / 'segments_anno.json'
@@ -474,7 +477,6 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
             eval_sampling=args.eval_sampling,
             multi_object_eval=getattr(args, 'multi_object_eval', False),
             temporal_smooth_alpha=getattr(args, 'temporal_smooth_alpha', 0.0),
-            use_crf=getattr(args, 'use_crf', False),
         )
 
         if 'error' in result:
@@ -516,7 +518,6 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
     ddp.barrier()  # Sync before gathering
 
     if ddp.is_distributed:
-        import pickle
         # Serialize results for gathering
         local_results_bytes = pickle.dumps(all_results)
         local_metrics_bytes = pickle.dumps(dict(all_category_metrics))
@@ -640,33 +641,27 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
     total_consistency_objects = sum(r.get('num_consistency_objects', 0) for r in all_results)
     global_consistency_iou = np.mean(valid_consistency) if valid_consistency else None
 
-    print(); print("="*70)
-    print("EVALUATION RESULTS")
-    print("="*70)
-    print(f"Scenes evaluated: {len(all_results)}")
-    print(f"Total samples: {total_samples}")
-    print(f"Categories: {len(global_per_cat_iou)}")
-    print("-"*70)
-    print(f"{'Metric':<25} {'Selected':<15} {'Oracle':<15} {'Gap':<10}")
-    print("-"*70)
-    print(f"{'Sample-avg IoU:':<25} {100*sample_iou:>13.2f}%  {100*sample_oracle_iou:>13.2f}%  {100*(sample_oracle_iou-sample_iou):>+8.2f}%")
-    print(f"{'Scene-avg mIoU:':<25} {100*scene_miou:>13.2f}%  {100*scene_oracle_miou:>13.2f}%  {100*(scene_oracle_miou-scene_miou):>+8.2f}%")
-    print(f"{'Global mIoU:':<25} {100*global_miou:>13.2f}%  {100*global_oracle_miou:>13.2f}%  {100*(global_oracle_miou-global_miou):>+8.2f}%")
-    print("-"*70)
+    print_results_table(
+        "EVALUATION RESULTS",
+        info_lines=[
+            f"Scenes evaluated: {len(all_results)}",
+            f"Total samples: {total_samples}",
+            f"Categories: {len(global_per_cat_iou)}",
+        ],
+        metric_rows=[
+            ("Sample-avg IoU:", sample_iou, sample_oracle_iou),
+            ("Scene-avg mIoU:", scene_miou, scene_oracle_miou),
+            ("Global mIoU:", global_miou, global_oracle_miou),
+        ],
+    )
     print(f"mAcc (Pixel Acc): {100*global_pixel_acc:.2f}%  (sample-avg: {100*sample_pixel_acc:.2f}%)")
     print(f"Mean Class Recall:{100*global_mean_class_recall:.2f}%  (sample-avg: {100*sample_recall:.2f}%)")
     print(f"Precision:        {100*sample_precision:.2f}%")
     print(f"F1 Score:         {100*sample_f1:.2f}%")
     print("-"*70)
     if total_centroid_samples > 0:
-        print(f"3D Localization (IoU-based, same pointmap):")
-        print(f"  Acc@5cm:        {100*global_acc_5cm:.2f}%")
-        print(f"  Acc@10cm:       {100*global_acc_10cm:.2f}%")
-        print(f"  Acc@50cm:       {100*global_acc_50cm:.2f}%")
-        if global_mean_centroid_error != float('inf'):
-            print(f"  Mean Error:     {global_mean_centroid_error*100:.1f} cm")
-        print(f"  Samples:        {total_centroid_samples}")
-        print("-"*60)
+        print_localization_block(global_acc_5cm, global_acc_10cm, global_acc_50cm,
+                                 global_mean_centroid_error, total_centroid_samples)
 
     # Procrustes-aligned localization 
     if total_procrustes_samples > 0:
@@ -707,67 +702,13 @@ def _evaluate_scannetpp(model, args, device, ddp, data_root, output_dir, viz_dir
     print(f"Total per sample: {avg_preprocess_ms + avg_inference_ms:.1f} ms")
     print("-"*60)
 
-    sorted_cats = sorted(global_per_cat_iou.items(), key=lambda x: x[1], reverse=True)
-    print("\nTop 5 categories:")
-    for cat, iou in sorted_cats[:5]:
-        recall = global_per_cat_recall.get(cat, 0)
-        print(f"  {cat}: IoU={100*iou:.1f}%, Recall={100*recall:.1f}%")
-    print("\nBottom 5 categories:")
-    for cat, iou in sorted_cats[-5:]:
-        recall = global_per_cat_recall.get(cat, 0)
-        print(f"  {cat}: IoU={100*iou:.1f}%, Recall={100*recall:.1f}%")
+    print_top_bottom_categories(global_per_cat_iou, global_per_cat_recall, blank_line=True)
 
     # Cross-fold analysis (stratified category grouping)
     fold_results = None
     if args.cross_fold and len(global_per_cat_iou) >= args.num_folds:
-        print(); print("="*70)
-        print(f"CROSS-FOLD ANALYSIS ({args.num_folds} folds)")
-        print("="*70)
-        print("Grouping categories into folds for per-group performance analysis\n")
-
-        # Sort categories alphabetically for deterministic fold assignment
-        sorted_categories = sorted(global_per_cat_iou.keys())
-        fold_size = len(sorted_categories) // args.num_folds
-
-        fold_results = []
-        for fold_idx in range(args.num_folds):
-            start_idx = fold_idx * fold_size
-            if fold_idx == args.num_folds - 1:
-                # Last fold gets remaining categories
-                end_idx = len(sorted_categories)
-            else:
-                end_idx = (fold_idx + 1) * fold_size
-
-            fold_categories = sorted_categories[start_idx:end_idx]
-            fold_ious = [global_per_cat_iou[cat] for cat in fold_categories]
-            fold_recalls = [global_per_cat_recall.get(cat, 0) for cat in fold_categories]
-
-            fold_mean_iou = np.mean(fold_ious)
-            fold_mean_recall = np.mean(fold_recalls)
-
-            fold_results.append({
-                'fold_id': fold_idx,
-                'categories': fold_categories,
-                'num_categories': len(fold_categories),
-                'mean_iou': float(fold_mean_iou),
-                'mean_recall': float(fold_mean_recall),
-            })
-
-            print(f"Fold {fold_idx + 1}/{args.num_folds}: {len(fold_categories)} categories")
-            print(f"  Mean IoU:    {100*fold_mean_iou:.2f}%")
-            print(f"  Mean Recall: {100*fold_mean_recall:.2f}%")
-            print(f"  Categories:  {', '.join(fold_categories[:5])}" +
-                  (f", ... (+{len(fold_categories)-5} more)" if len(fold_categories) > 5 else ""))
-            print()
-
-        # Find best/worst folds
-        best_fold = max(fold_results, key=lambda x: x['mean_iou'])
-        worst_fold = min(fold_results, key=lambda x: x['mean_iou'])
-
-        print(f"Best fold: Fold {best_fold['fold_id'] + 1} (mIoU={100*best_fold['mean_iou']:.2f}%)")
-        print(f"Worst fold: Fold {worst_fold['fold_id'] + 1} (mIoU={100*worst_fold['mean_iou']:.2f}%)")
-        print(f"Performance gap: {100*(best_fold['mean_iou'] - worst_fold['mean_iou']):.2f}%")
-        print("="*70)
+        fold_results = print_cross_fold_analysis(
+            global_per_cat_iou, global_per_cat_recall, args.num_folds)
 
     # Build results dict
     results_dict = {

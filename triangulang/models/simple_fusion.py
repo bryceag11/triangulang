@@ -1,19 +1,9 @@
 """
 Simplified DA3-SAM3 fusion head that can actually learn
 """
-import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-from triangulang import BPE_PATH as _BPE_PATH
-
-# Import GASA components for geometry-aware attention
-from triangulang.models.gasa import (
-    GASAEncoder,
-    PointmapComputer,
-    WorldSpacePositionalEncoding
-)
 
 
 class SimpleFusionHead(nn.Module):

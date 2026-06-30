@@ -31,6 +31,8 @@ Usage:
 
 import os
 import random
+import sqlite3
+import argparse
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
@@ -40,6 +42,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 from PIL import Image
+import cv2
 
 import triangulang
 logger = triangulang.get_logger(__name__)
@@ -62,7 +65,7 @@ except ImportError:
 
 
 from triangulang.data.uco3d_utils import (
-    SKIP_CATEGORIES, SKIP_SEQUENCES, PROMPT_SIMPLIFICATIONS, normalize_prompt,
+    SKIP_CATEGORIES, SKIP_SEQUENCES, normalize_prompt,
 )
 
 class UCO3DMultiViewDataset(Dataset):
@@ -173,7 +176,7 @@ class UCO3DMultiViewDataset(Dataset):
                 logger.info(f"[uCO3D] Using cached depth from {self.da3_cache_dir}")
             else:
                 logger.warning(f"[uCO3D] DA3 cache not found: {self.da3_cache_dir}")
-                logger.warning(f"  Run scripts/preprocess_da3_uco3d.py first.")
+                logger.warning("  Run scripts/preprocess_da3_uco3d.py first.")
 
         # Initialize sequences
         self.sequences = []
@@ -265,8 +268,6 @@ class UCO3DMultiViewDataset(Dataset):
 
     # Initialize from official sqlite set_lists (proper train/val split or k-fold CV)
     def _init_from_sqlite(self, subset_list: str):
-        import sqlite3
-
         sqlite_path = self.data_root / "set_lists" / subset_list
         if not sqlite_path.exists():
             logger.warning(f"[uCO3D] Set list not found: {sqlite_path}, falling back to directory scan")
@@ -457,8 +458,6 @@ class UCO3DMultiViewDataset(Dataset):
         frame_indices: List[int],
         is_mask: bool = False
     ) -> List[np.ndarray]:
-        import cv2
-
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open video: {video_path}")
@@ -660,8 +659,6 @@ class UCO3DMultiViewDataset(Dataset):
 
     # Load sample using direct video loading (no uCO3D package)
     def _getitem_standalone(self, seq: Dict, sample_idx: int) -> Dict:
-        import cv2
-
         rgb_video = seq['rgb_video']
         mask_video = seq['mask_video']
         depth_file = seq.get('depth_file')
@@ -811,8 +808,6 @@ class UCO3DMultiViewDataset(Dataset):
 
 if __name__ == '__main__':
     # Test the dataset
-    import argparse
-
     parser = argparse.ArgumentParser()
     parser.add_argument('--data-root', type=str, default=None)
     parser.add_argument('--num-sequences', type=int, default=5)

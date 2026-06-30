@@ -1,331 +1,36 @@
-"""Forward pass helpers for TrianguLang training loop."""
+"""Batched forward pass for TrianguLang training (all views in one model call).
+
+Public entry points are re-exported here so they keep their original import
+paths (triangulang.training.forward_passes):
+- ``_forward_cross_view``  -> forward_passes_cross_view
+- ``_forward_sequential``  -> forward_passes_seq
+- ``_compute_sheaf_loss``  -> forward_passes_seq
+"""
+import traceback
+
 import triangulang
 import torch
 
 logger = triangulang.get_logger(__name__)
 import torch.nn.functional as F
 from torch.amp import autocast
+from scipy.optimize import linear_sum_assignment
 from triangulang.losses.segmentation import (
-    focal_loss, dice_loss, align_loss, contrastive_mask_loss,
-    centroid_loss, boundary_loss,
+    focal_loss, dice_loss, align_loss, contrastive_mask_loss, centroid_loss,
 )
-from triangulang.losses.sheaf_losses import AsymmetricRestrictionSheaf
-from triangulang.losses.spatial_losses import spatial_ranking_loss, spatial_selection_loss
 from triangulang.utils.metrics import (
     compute_iou, compute_recall, compute_mean_accuracy,
     compute_per_mask_ious, compute_gt_centroid,
 )
 from triangulang.utils.matching import hungarian_match, text_greedy_match
 from triangulang.utils.geometry import triangulate_centroid
+from triangulang.training.forward_passes_common import (
+    connect_aux_heads_to_graph, connect_trainable_params_to_graph, smooth_mask_logits,
+)
 
+# Re-exports (keep importable from triangulang.training.forward_passes).
+from triangulang.training.forward_passes_cross_view import _forward_cross_view
 from triangulang.training.forward_passes_seq import _compute_sheaf_loss, _forward_sequential
-
-def _forward_cross_view(model, base_model, images, gt_masks, prompts, batch, args, device, ddp,
-                        N_views, B, gt_extrinsics, gt_intrinsics, intrinsics_orig_hw,
-                        cached_depth, cached_da3_extrinsics, cached_da3_intrinsics,
-                        spatial_qualifier_idx, epoch, start_epoch, batch_idx,
-                        cat_metrics, epoch_centroid_errors,
-                        batch_iou_tensor, batch_macc_tensor, batch_recall_tensor,
-                        batch_sheaf_loss_tensor):
-    accumulated_loss = None
-    valid = 0
-    batch_loss_tensor = torch.tensor(0.0, device=device)
-    last_vis_data = None
-    # This concatenates memories from all views and lets GASA attend across views
-    B, N_views = images.shape[:2]
-
-    # Check if we have extrinsics (required for world-frame PE)
-    if gt_extrinsics is None and cached_da3_extrinsics is None:
-        raise ValueError("--cross-view requires gt_extrinsics or da3_extrinsics for world-frame pointmaps")
-
-    try:
-        with autocast('cuda'):
-            # Call through DDP wrapper (cross_view_mode dispatches to forward_multiview)
-            # This ensures DDP's gradient sync hooks are properly triggered
-            cached_pi3x = batch.get('cached_pi3x_pointmaps')
-            if cached_pi3x is not None:
-                cached_pi3x = cached_pi3x.to(device, non_blocking=True)
-            outputs = model(
-                images, prompts, gt_masks.float(),
-                gt_extrinsics=gt_extrinsics,
-                gt_intrinsics=gt_intrinsics,
-                intrinsics_orig_hw=intrinsics_orig_hw,
-                cached_depth=cached_depth,
-                da3_extrinsics=cached_da3_extrinsics,
-                da3_intrinsics=cached_da3_intrinsics,
-                cross_view_mode=True,
-                cached_pi3x_pointmaps=cached_pi3x,
-            )
-            # pred_masks: [B, N, H, W]
-            pred = outputs['pred_masks']
-            all_view_masks = outputs['all_masks']  # [B, N, Q, H, W]
-
-            # Flatten for processing: [B*N, ...]
-            pred_flat = pred.view(B * N_views, *pred.shape[2:])  # [B*N, H, W]
-            gt_flat = gt_masks.view(B * N_views, *gt_masks.shape[2:]).float()  # [B*N, H, W]
-            all_masks_flat = all_view_masks.view(B * N_views, *all_view_masks.shape[2:])  # [B*N, Q, H, W]
-
-            # Resize GT if needed
-            if gt_flat.shape[-2:] != pred_flat.shape[-2:]:
-                gt_flat = F.interpolate(gt_flat.unsqueeze(1), size=pred_flat.shape[-2:],
-                                       mode='nearest').squeeze(1)
-
-            # Determine valid views
-            valid_mask = gt_flat.sum(dim=(-2, -1)) > 0  # [B*N]
-
-            # Compute loss for all views
-            loss = torch.tensor(0.0, device=device, requires_grad=True)
-            n_valid = 0
-
-            for i in range(B * N_views):
-                view_pred = pred_flat[i:i+1]  # [1, H, W]
-                view_gt = gt_flat[i:i+1]  # [1, H, W]
-
-                view_loss = (args.focal_weight * focal_loss(view_pred, view_gt, alpha=args.focal_alpha, gamma=args.focal_gamma) +
-                            args.dice_weight * dice_loss(view_pred.unsqueeze(1), view_gt.unsqueeze(1)))
-
-                if not valid_mask[i]:
-                    view_loss = view_loss * 0.0
-                loss = loss + view_loss
-
-                if valid_mask[i]:
-                    batch_iou_tensor = batch_iou_tensor + compute_iou(view_pred.unsqueeze(1), view_gt.unsqueeze(1), return_tensor=True)
-                    batch_macc_tensor = batch_macc_tensor + compute_mean_accuracy(view_pred.unsqueeze(1), view_gt.unsqueeze(1), return_tensor=True)
-                    batch_recall_tensor = batch_recall_tensor + compute_recall(view_pred.unsqueeze(1), view_gt.unsqueeze(1), return_tensor=True)
-                    n_valid += 1
-
-                    # Track per-category metrics
-                    prompt_idx = i // N_views  # Map back to original batch index
-                    category = prompts[prompt_idx] if prompt_idx < len(prompts) else "unknown"
-                    cat_metrics.update(view_pred, view_gt, category)
-
-            # IoU prediction loss (cross-view path)
-            # Note: iou_pred is [B, Q] (per-scene), not [B*N, Q] (per-view)
-            # We compute average IoU across valid views for each scene as the target
-            if n_valid > 0 and args.use_iou_head and args.iou_head_weight > 0 and 'iou_pred' in outputs and outputs['iou_pred'] is not None:
-                for b in range(B):
-                    # Gather IoUs from all valid views of this scene
-                    scene_ious = []
-                    for v in range(N_views):
-                        idx = b * N_views + v
-                        if valid_mask[idx]:
-                            actual_ious = compute_per_mask_ious(all_masks_flat[idx:idx+1], gt_flat[idx:idx+1])
-                            scene_ious.append(actual_ious)
-                    if len(scene_ious) > 0:
-                        # Average IoUs across valid views
-                        avg_scene_ious = torch.stack(scene_ious, dim=0).mean(dim=0)  # [1, Q]
-                        iou_pred_loss = F.mse_loss(outputs['iou_pred'][b:b+1], avg_scene_ious.detach())
-                        loss = loss + args.iou_head_weight * iou_pred_loss / B
-
-            # Contrastive loss (cross-view path)
-            # Note: pred_logits and iou_pred are [B, Q] (per-scene)
-            # Use average IoU across valid views to determine best query per scene
-            if n_valid > 0 and args.contrastive_weight > 0:
-                for b in range(B):
-                    # Gather IoUs from all valid views of this scene
-                    scene_ious = []
-                    for v in range(N_views):
-                        idx = b * N_views + v
-                        if valid_mask[idx]:
-                            actual_ious = compute_per_mask_ious(all_masks_flat[idx:idx+1], gt_flat[idx:idx+1])
-                            scene_ious.append(actual_ious)
-                    if len(scene_ious) > 0:
-                        avg_scene_ious = torch.stack(scene_ious, dim=0).mean(dim=0)  # [1, Q]
-                        best_idx = avg_scene_ious.argmax(dim=1)
-                        if args.contrastive_source == 'logits':
-                            scores = outputs['pred_logits'][b:b+1]
-                        elif args.contrastive_source == 'iou_pred' and 'iou_pred' in outputs:
-                            scores = outputs['iou_pred'][b:b+1]
-                        else:
-                            scores = None
-                        if scores is not None:
-                            contrast_loss = contrastive_mask_loss(scores, best_idx, margin=args.contrastive_margin)
-                            loss = loss + args.contrastive_weight * contrast_loss / B
-
-            # Align loss (cross-view path)
-            # Note: pred_logits is [B, Q] (per-scene)
-            # Use average IoU across valid views as the target
-            if n_valid > 0 and args.align_weight > 0:
-                for b in range(B):
-                    # Gather IoUs from all valid views of this scene
-                    scene_ious = []
-                    for v in range(N_views):
-                        idx = b * N_views + v
-                        if valid_mask[idx]:
-                            actual_ious = compute_per_mask_ious(all_masks_flat[idx:idx+1], gt_flat[idx:idx+1])
-                            scene_ious.append(actual_ious)
-                    if len(scene_ious) > 0:
-                        avg_scene_ious = torch.stack(scene_ious, dim=0).mean(dim=0)  # [1, Q]
-                        logits = outputs['pred_logits'][b:b+1]
-                        align_l = align_loss(logits, avg_scene_ious,
-                                            alpha=args.align_alpha,
-                                            gamma=args.align_gamma,
-                                            tau=args.align_tau)
-                        loss = loss + args.align_weight * align_l / B
-
-            # PER-LAYER AUXILIARY ALIGN LOSS (SAM3-style)
-            # Compute align loss on intermediate decoder layer outputs to give
-            # intermediate layers direct gradient signal for scoring.
-            # Uses same IoU targets as final layer (masks only computed from final layer).
-            if args.per_layer_align and args.align_weight > 0 and 'aux_queries' in outputs and outputs['aux_queries'] is not None:
-                aux_align_weight = args.per_layer_align_weight if args.per_layer_align_weight is not None else args.align_weight
-                num_aux_layers = len(outputs['aux_queries'])
-                # Pre-compute per-scene avg IoUs (reuse across aux layers)
-                cached_avg_ious = {}
-                for b in range(B):
-                    scene_ious = []
-                    for v in range(N_views):
-                        idx = b * N_views + v
-                        if valid_mask[idx]:
-                            actual_ious = compute_per_mask_ious(all_masks_flat[idx:idx+1], gt_flat[idx:idx+1])
-                            scene_ious.append(actual_ious)
-                    if len(scene_ious) > 0:
-                        cached_avg_ious[b] = torch.stack(scene_ious, dim=0).mean(dim=0)
-                # Apply align loss to each intermediate layer
-                for layer_idx, aux_q in enumerate(outputs['aux_queries']):
-                    aux_text_scores = base_model.gasa_decoder.compute_scores_for_queries(aux_q)
-                    if aux_text_scores is None:
-                        continue
-                    for b, avg_ious in cached_avg_ious.items():
-                        aux_logits = aux_text_scores[b:b+1]
-                        aux_align_l = align_loss(aux_logits, avg_ious,
-                                                 alpha=args.align_alpha,
-                                                 gamma=args.align_gamma,
-                                                 tau=args.align_tau)
-                        loss = loss + aux_align_weight * aux_align_l / (B * num_aux_layers)
-
-            # Presence loss (cross-view path)
-            # Note: presence_logit is [B, 1] (per-scene)
-            # Target is 1 if any view in the scene has valid GT, 0 otherwise
-            if args.presence_weight > 0 and 'presence_logit' in outputs and outputs['presence_logit'] is not None:
-                # Check if each scene has at least one valid view
-                scene_has_object = torch.zeros(B, 1, device=device)
-                for b in range(B):
-                    if valid_mask[b * N_views:(b + 1) * N_views].any():
-                        scene_has_object[b, 0] = 1.0
-                if args.presence_focal:
-                    presence_loss = focal_loss(outputs['presence_logit'], scene_has_object,
-                                               alpha=args.presence_alpha, gamma=args.presence_gamma)
-                else:
-                    presence_loss = F.binary_cross_entropy_with_logits(
-                        outputs['presence_logit'], scene_has_object
-                    )
-                loss = loss + args.presence_weight * presence_loss
-
-            # Centroid loss (cross-view path)
-            # Note: per_query_centroids is [B, Q, 3] (per-scene, in world coords)
-            # We compute GT centroid per view and average for the scene target
-            if n_valid > 0 and args.use_centroid_head and args.centroid_weight > 0 and 'per_query_centroids' in outputs and outputs['per_query_centroids'] is not None:
-                pointmaps_full = outputs['pointmaps_full']  # [B, N, H_da3, W_da3, 3]
-                pointmaps_full_flat = pointmaps_full.view(B * N_views, *pointmaps_full.shape[2:])  # [B*N, H, W, 3]
-                pm_h, pm_w = pointmaps_full_flat.shape[1:3]
-
-                # Resize GT masks to match pointmaps resolution
-                gt_resized = F.interpolate(
-                    gt_flat.unsqueeze(1).float(),
-                    size=(pm_h, pm_w),
-                    mode='nearest'
-                ).squeeze(1)  # [B*N, H_da3, W_da3]
-
-                # Resize pred masks for mask-based centroid
-                pred_resized = F.interpolate(
-                    pred_flat.unsqueeze(1),
-                    size=(pm_h, pm_w),
-                    mode='bilinear', align_corners=False
-                ).squeeze(1)  # [B*N, H, W]
-
-                per_query_cents = outputs['per_query_centroids']  # [B, Q, 3]
-                best_idx_flat = outputs['best_idx']  # [B*N]
-
-                for b in range(B):
-                    # Gather GT centroids from valid views and average
-                    gt_cents = []
-                    pred_cents = []
-                    for v in range(N_views):
-                        idx = b * N_views + v
-                        if valid_mask[idx]:
-                            gt_cent = compute_gt_centroid(gt_resized[idx], pointmaps_full_flat[idx])
-                            gt_cents.append(gt_cent)
-                            if args.mask_based_centroid:
-                                pred_cent = compute_gt_centroid(pred_resized[idx], pointmaps_full_flat[idx])
-                                pred_cents.append(pred_cent)
-
-                    if len(gt_cents) > 0:
-                        avg_gt_cent = torch.stack(gt_cents, dim=0).mean(dim=0)  # [3]
-                        if args.mask_based_centroid and len(pred_cents) > 0:
-                            selected_cent = torch.stack(pred_cents, dim=0).mean(dim=0)  # [3]
-                        else:
-                            # Attention-based: use centroid from best query (use first valid view's best_idx)
-                            first_valid_idx = b * N_views + [v for v in range(N_views) if valid_mask[b * N_views + v]][0]
-                            selected_cent = per_query_cents[b, best_idx_flat[first_valid_idx]]  # [3]
-                        cent_loss = centroid_loss(selected_cent.unsqueeze(0), avg_gt_cent.unsqueeze(0))
-                        loss = loss + args.centroid_weight * cent_loss / B
-
-            # Centroid error tracking for Acc@m metrics (cross-view path)
-            if n_valid > 0 and (args.use_centroid_head or args.eval_localization) and 'pointmaps_full' in outputs:
-                with torch.no_grad():
-                    pointmaps_full = outputs['pointmaps_full']  # [B, N, H_da3, W_da3, 3]
-                    pointmaps_full_flat = pointmaps_full.view(B * N_views, *pointmaps_full.shape[2:])
-                    pm_h, pm_w = pointmaps_full_flat.shape[1:3]
-
-                    # Resize GT masks to pointmap resolution
-                    gt_resized = F.interpolate(
-                        gt_flat.unsqueeze(1).float(),
-                        size=(pm_h, pm_w),
-                        mode='nearest'
-                    ).squeeze(1)
-
-                    # Resize pred masks to pointmap resolution
-                    pred_resized = F.interpolate(
-                        pred_flat.unsqueeze(1),
-                        size=(pm_h, pm_w),
-                        mode='bilinear', align_corners=False
-                    ).squeeze(1)
-
-                    # Get normalization scale to convert back to meters
-                    norm_params = outputs.get('norm_params', None)
-                    scale = norm_params['scale'].item() if norm_params and 'scale' in norm_params else 1.0
-
-                    for i in range(B * N_views):
-                        if valid_mask[i]:
-                            pred_cent = compute_gt_centroid(pred_resized[i], pointmaps_full_flat[i])
-                            gt_cent = compute_gt_centroid(gt_resized[i], pointmaps_full_flat[i])
-                            dist_error = torch.norm(pred_cent - gt_cent).item() * scale
-                            epoch_centroid_errors.append(dist_error)
-
-            # Connect ALL auxiliary heads to graph to ensure DDP gradient sync
-            if 'presence_logit' in outputs and outputs['presence_logit'] is not None:
-                loss = loss + outputs['presence_logit'].sum() * 0.0
-            if 'iou_pred' in outputs and outputs['iou_pred'] is not None:
-                loss = loss + outputs['iou_pred'].sum() * 0.0
-            if 'per_query_centroids' in outputs and outputs['per_query_centroids'] is not None:
-                loss = loss + outputs['per_query_centroids'].sum() * 0.0
-            if 'text_scores' in outputs and outputs['text_scores'] is not None:
-                loss = loss + outputs['text_scores'].sum() * 0.0
-            if 'joint_scores' in outputs and outputs['joint_scores'] is not None:
-                loss = loss + outputs['joint_scores'].sum() * 0.0
-
-            # Nuclear option: connect ALL trainable GASA decoder params
-            base_module = model.module if hasattr(model, 'module') else model
-            for p in base_module.gasa_decoder.parameters():
-                if p.requires_grad:
-                    loss = loss + p.sum() * 0.0
-            for p in base_module.query_proj.parameters():
-                if p.requires_grad:
-                    loss = loss + p.sum() * 0.0
-
-            if n_valid > 0:
-                batch_loss_tensor = batch_loss_tensor + loss.detach()
-            accumulated_loss = loss / args.grad_accum
-            valid = n_valid
-
-    except Exception as e:
-        logger.warning(f"Error in cross-view forward: {e}")
-        import traceback
-        traceback.print_exc()
-
-    return (accumulated_loss, valid, batch_loss_tensor, batch_iou_tensor, batch_macc_tensor,
-            batch_recall_tensor, batch_sheaf_loss_tensor, last_vis_data)
 
 
 def _forward_batch_views(model, base_model, images, gt_masks, prompts, batch, args, device, ddp,
@@ -560,7 +265,6 @@ def _forward_batch_views(model, base_model, images, gt_masks, prompts, batch, ar
                             first_valid = next((v_idx * B + b_idx for v_idx in range(N_views) if valid_mask[v_idx * B + b_idx]), 0)
                             ts = text_scores_multi[first_valid, :, :K_i]
                             avg_cost = avg_cost + 0.5 * (-ts.sigmoid())
-                        from scipy.optimize import linear_sum_assignment
                         row_ind, col_ind = linear_sum_assignment(avg_cost.detach().cpu().numpy())
                         matched = list(zip(row_ind.tolist(), col_ind.tolist()))
                         unmatched = [q for q in range(all_masks_resized.shape[1]) if q not in set(row_ind.tolist())]
@@ -714,14 +418,8 @@ def _forward_batch_views(model, base_model, images, gt_masks, prompts, batch, ar
                     all_gt_for_loss = all_gt
                     pred_for_loss = pred
 
-                # Mask smoothing (29x29 avg pool, matches eval-time LangSplat protocol)
-                if args.mask_smooth_kernel > 0:
-                    sk = args.mask_smooth_kernel
-                    sp = sk // 2
-                    pred_for_loss = F.avg_pool2d(
-                        pred_for_loss.unsqueeze(1), kernel_size=sk, stride=1, padding=sp,
-                        count_include_pad=False
-                    ).squeeze(1)
+                # Mask smoothing (avg pool, matches eval-time LangSplat protocol)
+                pred_for_loss = smooth_mask_logits(pred_for_loss, args.mask_smooth_kernel)
 
                 n_items = all_gt_for_loss.shape[0]  # B*N for single-obj, B*N*K for SAM3-MO
 
@@ -937,40 +635,11 @@ def _forward_batch_views(model, base_model, images, gt_masks, prompts, batch, ar
                             cent_loss = centroid_loss(selected_cent.unsqueeze(0), gt_cent.unsqueeze(0))
                             loss = loss + args.centroid_weight * cent_loss / n_valid
 
-            # Connect ALL auxiliary heads to graph to ensure DDP gradient sync
-            # This must happen ALWAYS to avoid "unused parameters" error with DDP
-            # Multiply by 0 to connect without affecting gradients
+            # Keep aux heads + trainable params connected for DDP gradient sync
+            # (0-weighted, so no effect on gradients).
+            loss = connect_aux_heads_to_graph(loss, outputs)
 
-            # Connect presence_logit (from presence_token + presence_head)
-            # Even if presence_weight > 0, we already added it above, but * 0.0 is safe
-            if 'presence_logit' in outputs and outputs['presence_logit'] is not None:
-                loss = loss + outputs['presence_logit'].sum() * 0.0
-
-            # Connect iou_pred (from iou_head)
-            if 'iou_pred' in outputs and outputs['iou_pred'] is not None:
-                loss = loss + outputs['iou_pred'].sum() * 0.0
-
-            # Connect per_query_centroids (from centroid_proj)
-            if 'per_query_centroids' in outputs and outputs['per_query_centroids'] is not None:
-                loss = loss + outputs['per_query_centroids'].sum() * 0.0
-
-            # Connect text_scores (from scoring head)
-            if 'text_scores' in outputs and outputs['text_scores'] is not None:
-                loss = loss + outputs['text_scores'].sum() * 0.0
-            if 'joint_scores' in outputs and outputs['joint_scores'] is not None:
-                loss = loss + outputs['joint_scores'].sum() * 0.0
-
-            # Nuclear option: Connect ALL trainable GASA decoder params to loss
-            # This ensures DDP gradient sync never fails due to unused params
-            # The * 0.0 means no actual gradient contribution
-            base_module = model.module if hasattr(model, 'module') else model
-            for p in base_module.gasa_decoder.parameters():
-                if p.requires_grad:
-                    loss = loss + p.sum() * 0.0
-            # Also connect query_proj
-            for p in base_module.query_proj.parameters():
-                if p.requires_grad:
-                    loss = loss + p.sum() * 0.0
+            loss = connect_trainable_params_to_graph(loss, model, include_query_proj=True)
 
             # ALWAYS set accumulated_loss (even if all views invalid) to ensure
             # backward() runs and keeps DDP gradient sync working
@@ -987,9 +656,7 @@ def _forward_batch_views(model, base_model, images, gt_masks, prompts, batch, ar
 
     except Exception as e:
         logger.warning(f"Error in batched forward: {e}")
-        import traceback
         traceback.print_exc()
 
     return (accumulated_loss, valid, batch_loss_tensor, batch_iou_tensor, batch_macc_tensor,
             batch_recall_tensor, batch_sheaf_loss_tensor, last_vis_data)
-

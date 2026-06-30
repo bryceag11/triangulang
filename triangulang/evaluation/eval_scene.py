@@ -11,6 +11,7 @@ from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 from tqdm import tqdm
 from PIL import Image
+from scipy.optimize import linear_sum_assignment
 
 from triangulang.models.triangulang_model import TrianguLangModel
 from triangulang.utils.prompt_augmentor import PromptAugmentor
@@ -54,7 +55,6 @@ def _evaluate_scene_multi_object(
     eval_items, min_pixel_fraction, da3_cache_dir, precomputed_backbone,
     save_viz=False, viz_dir=None, viz_samples=5,
     temporal_smooth_alpha=0.0,
-    use_crf=False,
 ):
     """Multi-object eval: batch all K objects per frame in a single forward pass.
 
@@ -64,8 +64,6 @@ def _evaluate_scene_multi_object(
 
     Speedup: ~Kx on decoder time (backbone already cached).
     """
-    from scipy.optimize import linear_sum_assignment
-
     results = defaultdict(list)
     category_metrics = defaultdict(lambda: {'iou': [], 'oracle_iou': [], 'pixel_acc': [], 'recall': [], 'precision': [], 'f1': []})
     preprocess_times = []
@@ -216,15 +214,6 @@ def _evaluate_scene_multi_object(
                     prev_logits[k_idx] = logit_cpu
                     pred_masks_k[k_idx] = logit_cpu.to(device)
 
-            # CRF / morphological post-processing to refine mask boundaries
-            if use_crf:
-                from triangulang.utils.crf_postprocess import morphological_smooth
-                for k_idx in range(pred_masks_k.shape[0]):
-                    mask_binary = (torch.sigmoid(pred_masks_k[k_idx]) > 0.5).cpu().numpy().astype(np.float32)
-                    refined = morphological_smooth(mask_binary, kernel_size=7)
-                    refined_logit = torch.from_numpy(refined * 10.0 - 5.0).to(device)
-                    pred_masks_k[k_idx] = refined_logit
-
             # Direct 1:1 matching: object k's mask is pred_masks_k[k]
             matched_pairs = [(k_idx, k_idx) for k_idx in valid_objects]  # (obj_idx, pred_idx)
             pred_source = pred_masks_k
@@ -287,8 +276,7 @@ def _evaluate_scene_multi_object(
         spatial_postprocess_labels = {}  # obj_k -> list of spatial cat_labels
         if sam3_mo and sam3_mo_K is not None and cached_depth is not None:
             # Group predictions by base label
-            from collections import defaultdict as _dd
-            label_groups = _dd(list)
+            label_groups = defaultdict(list)
             for obj_k, pred_k in matched_pairs:
                 base_label = object_list[obj_k][0]  # base label (not spatial prompt)
                 label_groups[base_label].append((obj_k, pred_k))
@@ -593,8 +581,6 @@ def evaluate_scene(
     multi_object_eval: bool = False,
     # Temporal EMA smoothing: blend mask logits across consecutive frames
     temporal_smooth_alpha: float = 0.0,
-    # CRF post-processing for mask boundary refinement
-    use_crf: bool = False,
 ) -> Dict:
     """Evaluate model on a single scene.
 
@@ -718,7 +704,6 @@ def evaluate_scene(
             precomputed_backbone=_precomputed_backbone,
             save_viz=save_viz, viz_dir=viz_dir, viz_samples=viz_samples,
             temporal_smooth_alpha=temporal_smooth_alpha,
-            use_crf=use_crf,
         )
 
     results = defaultdict(list)
@@ -747,11 +732,10 @@ def evaluate_scene(
                 pt_files = sorted(scene_cache_dir.glob('*.pt'))
                 max_procrustes_frames = 300
                 if len(pt_files) > max_procrustes_frames:
-                    import random as _rng
-                    _rng_state = _rng.getstate()
-                    _rng.seed(42)
-                    pt_files = sorted(_rng.sample(pt_files, max_procrustes_frames))
-                    _rng.setstate(_rng_state)
+                    _rng_state = random.getstate()
+                    random.seed(42)
+                    pt_files = sorted(random.sample(pt_files, max_procrustes_frames))
+                    random.setstate(_rng_state)
                 for pt_file in pt_files:
                     try:
                         cache_data = torch.load(pt_file, map_location='cpu', weights_only=True)

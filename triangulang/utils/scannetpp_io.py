@@ -6,14 +6,16 @@ the simple single-view dataset, and the SCANNETPP_PROMPTS vocabulary.
 import json
 import random
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 from PIL import Image
+from tqdm import tqdm
 
 import triangulang
+from triangulang.utils.scannetpp_base import get_scenes_dir, normalize_label
 logger = triangulang.get_logger(__name__)
 
 
@@ -143,8 +145,6 @@ def get_available_scenes(data_root: Path, split: str = None) -> List[str]:
     Returns:
         List of valid scene IDs
     """
-    from triangulang.utils.scannetpp_loader import get_scenes_dir
-
     data_root = Path(data_root)
     scenes_dir = get_scenes_dir(data_root)
 
@@ -185,8 +185,6 @@ def load_semantic_annotations(scene_path: Path) -> Dict[str, List[int]]:
     Returns:
         Dict mapping object label -> list of segment indices
     """
-    from triangulang.utils.scannetpp_loader import normalize_label
-
     anno_file = scene_path / "scans" / "segments_anno.json"
     if not anno_file.exists():
         return {}
@@ -227,8 +225,6 @@ class ScanNetPPDataset(Dataset):
         max_scenes: int = None
     ):
         self.data_root = Path(data_root)
-
-        from triangulang.utils.scannetpp_loader import get_scenes_dir
         self.scenes_dir = get_scenes_dir(self.data_root)
         self.image_size = image_size
         self.mask_size = mask_size
@@ -244,8 +240,6 @@ class ScanNetPPDataset(Dataset):
         self.scene_transforms = {}  # Cache transforms per scene
 
         logger.info(f"Loading ScanNet++ dataset ({split})...")
-
-        from tqdm import tqdm
 
         for scene_id in tqdm(scenes, desc="Loading scenes"):
             scene_path = self.scenes_dir / scene_id

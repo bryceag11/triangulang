@@ -1,20 +1,13 @@
 """GT-aware spatial context utilities: InstanceSpatialInfo, SpatialContext, GTAwareSpatialAugmentor, build_spatial_context."""
-import re
 import random
 from dataclasses import dataclass
-from typing import Tuple, Optional, List, Dict, Any
+from typing import Tuple, Optional, List, Dict
 import numpy as np
-import torch
 
 import triangulang
+from triangulang.utils.spatial_base import SPATIAL_QUALIFIERS, SPATIAL_QUALIFIER_TO_IDX
+
 logger = triangulang.get_logger(__name__)
-from triangulang.utils.spatial_reasoning import (
-    SPATIAL_QUALIFIERS, SPATIAL_QUALIFIER_TO_IDX, RELATION_PATTERNS,
-    parse_spatial_qualifier, parse_relational_query, get_spatial_qualifier_idx,
-    get_mask_centroid, get_depth_at_centroid, augment_label_with_spatial,
-    spatial_to_pseudo_point, spatial_to_pseudo_point_tensor, filter_by_relation,
-    SpatialAugmentor,
-)
 
 # GT-Aware Spatial Context for Training
 
@@ -535,6 +528,11 @@ def build_spatial_context(
 # Testing
 
 if __name__ == '__main__':
+    from triangulang.utils.spatial_reasoning import (
+        parse_spatial_qualifier, parse_relational_query,
+        spatial_to_pseudo_point, SpatialAugmentor,
+    )
+
     # Test spatial qualifier parsing
     test_prompts = [
         "nearest chair",

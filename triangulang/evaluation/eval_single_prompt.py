@@ -359,8 +359,6 @@ def evaluate_scene_single_prompt(
         use_estimated_poses: If True, use DA3-NESTED estimated poses (else GT)
         da3_nested_cache_dir: Path to DA3-NESTED cache directory
     """
-    from triangulang.evaluation.evaluate_gasa import load_scene_data, load_gt_masks
-
     images, objects, available_frames = load_scene_data(scene_path, semantics_dir)
     available_frames_set = set(available_frames)
     images = [img for img in images if img.name in available_frames_set]

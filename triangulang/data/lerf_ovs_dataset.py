@@ -27,7 +27,6 @@ import json
 import struct
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
-from collections import defaultdict
 
 import torch
 from torch.utils.data import Dataset

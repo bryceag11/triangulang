@@ -203,8 +203,6 @@ def spatial_selection_loss(pred_masks, gt_masks, depth, labels, spatial_indices)
             masked[~group_valid] = sentinel
             target_in_group = (masked.argmin() if find_min else masked.argmax()).item()
 
-            target_k = indices[target_in_group]
-
             # Compute IoU of this prediction against each same-label GT
             pred_prob = torch.sigmoid(pred_masks[k])  # [H, W]
             ious = []

@@ -1,20 +1,28 @@
 """LERF-OVS and LERF-Loc evaluation."""
 import json
 import math
+import traceback
 import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.distributed as dist
 from torch.amp import autocast
+from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from pathlib import Path
 from collections import defaultdict
 from tqdm import tqdm
 from PIL import Image
+from scipy.optimize import linear_sum_assignment
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 import triangulang
 
 logger = triangulang.get_logger(__name__)
 
-from triangulang.evaluation.eval_utils import compute_metrics, compute_spatial_gt
+from triangulang.evaluation.eval_utils import compute_metrics, compute_spatial_gt, print_results_table
 from triangulang.evaluation.data_loading import load_model
 from triangulang.evaluation.visualization import MASK_COLORS, overlay_mask_sam3_style
 from triangulang.data.lerf_ovs_dataset import (
@@ -120,14 +128,13 @@ def _compute_localization(relevancy, gt_binary, args):
 def _resolve_image_size(args, data_root):
     """Determine (img_h, img_w) from args, auto-detecting native resolution if requested."""
     if args.native_resolution:
-        from PIL import Image as _PILImage
         sample_scene = args.scene[0] if args.scene else 'figurines'
         sample_dir = data_root / 'lerf_ovs' / sample_scene / 'images'
         if not sample_dir.exists():
             sample_dir = data_root / sample_scene / 'images'
         sample_imgs = sorted(sample_dir.glob('*.jpg'))
         if sample_imgs:
-            _w, _h = _PILImage.open(sample_imgs[0]).size
+            _w, _h = Image.open(sample_imgs[0]).size
             img_h = math.ceil(_h / 14) * 14
             img_w = math.ceil(_w / 14) * 14
             logger.debug(f"  Native resolution: {_w}x{_h} -> padded to {img_w}x{img_h}")
@@ -164,11 +171,6 @@ def _save_visualization(scene_viz_dir, batch_idx, prompt, dataset_prompt,
                         target_img, target_gt, relevancy, pred_binary, gt_binary,
                         iou, loc_mask, loc_bbox, argmax_y, argmax_x, eval_frame_name):
     """Save a 2x2 visualization grid for a single sample."""
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    import matplotlib.patches as patches
-
     safe_prompt = prompt.replace(' ', '_').replace('/', '_')[:40]
     frame_stem = Path(eval_frame_name).stem
     viz_name = f'{frame_stem}_{safe_prompt}'
@@ -362,7 +364,6 @@ def _run_single_object_eval(model, args, device, ddp, eval_dataset, dataloader,
 
         except Exception as e:
             if ddp.is_main:
-                import traceback
                 logger.warning(f"Error batch {batch_idx}: {e}")
                 traceback.print_exc()
             continue
@@ -404,8 +405,6 @@ def _run_multiview_inference(model, images, intrinsics, prompt, sq_tensor, devic
 
 def _run_multi_object_eval(model, args, device, ddp, eval_dataset, acc):
     """Multi-object LERF evaluation using Hungarian matching."""
-    from scipy.optimize import linear_sum_assignment
-
     frame_groups = defaultdict(list)
     for sidx, sample in enumerate(eval_dataset.samples):
         key = (sample['scene_idx'], sample['eval_frame_name'])
@@ -513,7 +512,6 @@ def _run_multi_object_eval(model, args, device, ddp, eval_dataset, acc):
 
         except Exception as e:
             if ddp.is_main:
-                import traceback
                 logger.warning(f"Multi-obj LERF error: {e}")
                 traceback.print_exc()
             continue
@@ -579,11 +577,10 @@ def _aggregate_results(acc, args, ddp, save_viz, viz_dir, output_dir):
 
     # Print results table
     model_label = "BASELINE SAM3 (native)" if args.baseline_sam3 else "TrianguLang"
-    print()
-    print("=" * 70)
-    print(f"LERF-OVS EVALUATION RESULTS  [{model_label}]")
-    print("=" * 70)
-    print(f"Samples: {len(acc.all_ious)}  |  Categories: {len(per_cat_iou)}")
+    print_results_table(
+        f"LERF-OVS EVALUATION RESULTS  [{model_label}]",
+        info_lines=[f"Samples: {len(acc.all_ious)}  |  Categories: {len(per_cat_iou)}"],
+    )
     print("-" * 70)
     print(f"{'Sample-avg IoU:':<30} {100*mean_iou:>10.2f}%")
     print(f"{'Global mIoU (per-category):':<30} {100*global_miou:>10.2f}%")
@@ -668,9 +665,7 @@ def _evaluate_lerf(model, args, device, ddp, data_root, output_dir, viz_dir):
     spatial_instance_map = _build_spatial_instance_map(args, eval_dataset)
 
     model.eval()
-    from torch.utils.data import DataLoader
     if ddp.is_distributed:
-        from torch.utils.data.distributed import DistributedSampler
         sampler = DistributedSampler(eval_dataset, num_replicas=ddp.world_size,
                                      rank=ddp.rank, shuffle=False)
         dataloader = DataLoader(eval_dataset, batch_size=1, sampler=sampler, num_workers=2)

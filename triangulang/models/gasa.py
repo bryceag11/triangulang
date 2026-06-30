@@ -10,7 +10,6 @@ triangulang.models.positional_encodings and are re-exported here for
 backward compatibility.
 """
 
-import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
